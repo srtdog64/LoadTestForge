@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  loadtest:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile
+    command: 
+      - --target=http://httpbin.org/get
+      - --strategy=normal
+      - --sessions=1000
+      - --rate=100
+      - --duration=5m
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 512M
+        reservations:
+          cpus: '1'
+          memory: 256M
+    restart: unless-stopped
