@@ -51,6 +51,7 @@ func (r *Reporter) printStats(startTime time.Time) {
 
 	fmt.Printf("Requests/sec:    %.2f (σ=%.2f)\n", stats.AvgPerSec, stats.StdDev)
 	fmt.Printf("Min/Max:         %d / %d\n", stats.MinPerSec, stats.MaxPerSec)
+	fmt.Printf("Percentiles:     p50=%d, p95=%d, p99=%d\n", stats.P50, stats.P95, stats.P99)
 	fmt.Println()
 
 	if stats.AvgPerSec > 0 {
@@ -81,6 +82,7 @@ func (r *Reporter) printFinalReport(startTime time.Time) {
 	fmt.Printf("Avg Req/sec:     %.2f\n", stats.AvgPerSec)
 	fmt.Printf("Std Deviation:   %.2f\n", stats.StdDev)
 	fmt.Printf("Min/Max:         %d / %d\n", stats.MinPerSec, stats.MaxPerSec)
+	fmt.Printf("Percentiles:     p50=%d, p95=%d, p99=%d\n", stats.P50, stats.P95, stats.P99)
 	fmt.Println()
 
 	if stats.AvgPerSec > 0 {

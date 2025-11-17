@@ -5,10 +5,10 @@ import (
 )
 
 type Config struct {
-	Target         TargetConfig
-	Strategy       StrategyConfig
-	Performance    PerformanceConfig
-	Reporting      ReportingConfig
+	Target      TargetConfig
+	Strategy    StrategyConfig
+	Performance PerformanceConfig
+	Reporting   ReportingConfig
 }
 
 type TargetConfig struct {
@@ -28,12 +28,13 @@ type PerformanceConfig struct {
 	TargetSessions int
 	SessionsPerSec int
 	Duration       time.Duration
+	RampUpDuration time.Duration
 }
 
 type ReportingConfig struct {
-	Interval       time.Duration
-	ExportPath     string
-	ExportFormat   string
+	Interval     time.Duration
+	ExportPath   string
+	ExportFormat string
 }
 
 func DefaultConfig() *Config {
@@ -53,6 +54,7 @@ func DefaultConfig() *Config {
 			TargetSessions: 100,
 			SessionsPerSec: 10,
 			Duration:       60 * time.Second,
+			RampUpDuration: 0,
 		},
 		Reporting: ReportingConfig{
 			Interval:     2 * time.Second,

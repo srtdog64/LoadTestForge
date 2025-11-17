@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"math"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -74,15 +75,18 @@ func (c *Collector) Stop() {
 }
 
 type Stats struct {
-	Total        int64
-	Success      int64
-	Failed       int64
-	Active       int32
-	AvgPerSec    float64
-	StdDev       float64
-	MinPerSec    int
-	MaxPerSec    int
-	SuccessRate  float64
+	Total       int64
+	Success     int64
+	Failed      int64
+	Active      int32
+	AvgPerSec   float64
+	StdDev      float64
+	MinPerSec   int
+	MaxPerSec   int
+	P50         int
+	P95         int
+	P99         int
+	SuccessRate float64
 }
 
 func (c *Collector) GetStats() Stats {
@@ -109,6 +113,7 @@ func (c *Collector) GetStats() Stats {
 		stats.AvgPerSec = c.calculateAverage()
 		stats.StdDev = c.calculateStdDev(stats.AvgPerSec)
 		stats.MinPerSec, stats.MaxPerSec = c.calculateMinMax()
+		stats.P50, stats.P95, stats.P99 = c.calculatePercentiles()
 	}
 
 	return stats
@@ -157,4 +162,36 @@ func (c *Collector) calculateMinMax() (int, int) {
 	}
 
 	return min, max
+}
+
+func (c *Collector) calculatePercentiles() (int, int, int) {
+	if len(c.requestsPerSecond) == 0 {
+		return 0, 0, 0
+	}
+
+	sorted := make([]int, len(c.requestsPerSecond))
+	copy(sorted, c.requestsPerSecond)
+	sort.Ints(sorted)
+
+	p50 := percentile(sorted, 50)
+	p95 := percentile(sorted, 95)
+	p99 := percentile(sorted, 99)
+
+	return p50, p95, p99
+}
+
+func percentile(sorted []int, p int) int {
+	if len(sorted) == 0 {
+		return 0
+	}
+
+	index := int(math.Ceil(float64(len(sorted)) * float64(p) / 100.0))
+	if index >= len(sorted) {
+		index = len(sorted) - 1
+	}
+	if index < 0 {
+		index = 0
+	}
+
+	return sorted[index]
 }

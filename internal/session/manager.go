@@ -19,6 +19,7 @@ type Manager struct {
 	target         strategy.Target
 	targetSessions int
 	sessionsPerSec int
+	rampUpDuration time.Duration
 	limiter        *rate.Limiter
 	metrics        *metrics.Collector
 
@@ -32,6 +33,7 @@ func NewManager(
 	target strategy.Target,
 	targetSessions int,
 	sessionsPerSec int,
+	rampUpDuration time.Duration,
 	metricsCollector *metrics.Collector,
 ) *Manager {
 	return &Manager{
@@ -39,6 +41,7 @@ func NewManager(
 		target:         target,
 		targetSessions: targetSessions,
 		sessionsPerSec: sessionsPerSec,
+		rampUpDuration: rampUpDuration,
 		limiter:        rate.NewLimiter(rate.Limit(sessionsPerSec), sessionsPerSec),
 		metrics:        metricsCollector,
 		sessions:       make(map[string]context.CancelFunc),
@@ -46,6 +49,51 @@ func NewManager(
 }
 
 func (m *Manager) Run(ctx context.Context) error {
+	if m.rampUpDuration > 0 {
+		return m.runWithRampUp(ctx)
+	}
+	return m.runSteadyState(ctx)
+}
+
+func (m *Manager) runWithRampUp(ctx context.Context) error {
+	startTime := time.Now()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			m.shutdownAll()
+			return ctx.Err()
+		case <-ticker.C:
+			elapsed := time.Since(startTime)
+			
+			var currentTarget int
+			if elapsed < m.rampUpDuration {
+				progress := float64(elapsed) / float64(m.rampUpDuration)
+				currentTarget = int(float64(m.targetSessions) * progress)
+				if currentTarget < 1 {
+					currentTarget = 1
+				}
+			} else {
+				currentTarget = m.targetSessions
+			}
+
+			current := atomic.LoadInt32(&m.activeSessions)
+			if int(current) < currentTarget {
+				if err := m.limiter.Wait(ctx); err != nil {
+					if ctx.Err() != nil {
+						return ctx.Err()
+					}
+					continue
+				}
+				go m.launchSession(ctx)
+			}
+		}
+	}
+}
+
+func (m *Manager) runSteadyState(ctx context.Context) error {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
