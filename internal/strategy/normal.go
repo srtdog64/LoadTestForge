@@ -5,29 +5,52 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"sync/atomic"
 	"time"
 )
 
 type NormalHTTP struct {
-	client  *http.Client
-	timeout time.Duration
+	client           *http.Client
+	timeout          time.Duration
+	activeConnections int64
 }
 
 func NewNormalHTTP(timeout time.Duration) *NormalHTTP {
+	transport := &http.Transport{
+		MaxIdleConns:          0,
+		MaxIdleConnsPerHost:   0,
+		MaxConnsPerHost:       0,
+		IdleConnTimeout:       90 * time.Second,
+		DisableKeepAlives:     false,
+		ExpectContinueTimeout: 1 * time.Second,
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			dialer := &net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}
+			conn, err := dialer.DialContext(ctx, network, addr)
+			if err == nil {
+				atomic.AddInt64(&normalHTTPConnections, 1)
+			}
+			return conn, err
+		},
+	}
+
 	return &NormalHTTP{
 		client: &http.Client{
-			Timeout: timeout,
-			Transport: &http.Transport{
-				MaxIdleConns:        1000,
-				MaxIdleConnsPerHost: 1000,
-				MaxConnsPerHost:     1000,
-				IdleConnTimeout:     90 * time.Second,
-				DisableKeepAlives:   false,
-			},
+			Timeout:   timeout,
+			Transport: transport,
 		},
 		timeout: timeout,
 	}
+}
+
+var normalHTTPConnections int64
+
+func GetActiveConnections() int64 {
+	return atomic.LoadInt64(&normalHTTPConnections)
 }
 
 func (n *NormalHTTP) Execute(ctx context.Context, target Target) error {

@@ -36,7 +36,7 @@ func NewManager(
 	rampUpDuration time.Duration,
 	metricsCollector *metrics.Collector,
 ) *Manager {
-	return &Manager{
+	m := &Manager{
 		strategy:       strat,
 		target:         target,
 		targetSessions: targetSessions,
@@ -46,13 +46,38 @@ func NewManager(
 		metrics:        metricsCollector,
 		sessions:       make(map[string]context.CancelFunc),
 	}
+
+	if keepAlive, ok := strat.(interface {
+		SetMetricsCallback(strategy.MetricsCallback)
+	}); ok {
+		keepAlive.SetMetricsCallback(metricsCollector)
+	}
+
+	return m
 }
 
 func (m *Manager) Run(ctx context.Context) error {
+	go m.trackConnections(ctx)
+	
 	if m.rampUpDuration > 0 {
 		return m.runWithRampUp(ctx)
 	}
 	return m.runSteadyState(ctx)
+}
+
+func (m *Manager) trackConnections(ctx context.Context) {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			tcpConns := strategy.GetActiveConnections()
+			m.metrics.SetTCPConnections(tcpConns)
+		}
+	}
 }
 
 func (m *Manager) runWithRampUp(ctx context.Context) error {
