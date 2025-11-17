@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -16,6 +17,7 @@ type Slowloris struct {
 	connectionTimeout time.Duration
 	maxSessionLife    time.Duration
 	userAgents        []string
+	activeConnections int64
 }
 
 var defaultUserAgents = []string{
@@ -72,6 +74,8 @@ func (s *Slowloris) Execute(ctx context.Context, target Target) error {
 		return fmt.Errorf("connection failed: %w", err)
 	}
 	defer conn.Close()
+	atomic.AddInt64(&s.activeConnections, 1)
+	defer atomic.AddInt64(&s.activeConnections, -1)
 
 	userAgent := s.userAgents[rand.Intn(len(s.userAgents))]
 	path := parsedURL.Path
@@ -117,6 +121,10 @@ func (s *Slowloris) Execute(ctx context.Context, target Target) error {
 
 func (s *Slowloris) Name() string {
 	return "slowloris"
+}
+
+func (s *Slowloris) ActiveConnections() int64 {
+	return atomic.LoadInt64(&s.activeConnections)
 }
 
 func parseTargetURL(targetURL string) (*url.URL, string, bool, error) {

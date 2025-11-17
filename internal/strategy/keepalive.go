@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -19,14 +20,7 @@ type KeepAliveHTTP struct {
 	maxSessionLife    time.Duration
 	userAgents        []string
 	metricsCallback   MetricsCallback
-}
-
-type MetricsCallback interface {
-	RecordConnectionStart(connID, remoteAddr string)
-	RecordConnectionActivity(connID string)
-	RecordConnectionEnd(connID string)
-	RecordSocketTimeout()
-	RecordSocketReconnect()
+	activeConnections int64
 }
 
 func NewKeepAliveHTTP(pingInterval time.Duration) *KeepAliveHTTP {
@@ -40,6 +34,10 @@ func NewKeepAliveHTTP(pingInterval time.Duration) *KeepAliveHTTP {
 
 func (k *KeepAliveHTTP) SetMetricsCallback(callback MetricsCallback) {
 	k.metricsCallback = callback
+}
+
+func (k *KeepAliveHTTP) ActiveConnections() int64 {
+	return atomic.LoadInt64(&k.activeConnections)
 }
 
 func (k *KeepAliveHTTP) Execute(ctx context.Context, target Target) error {
@@ -75,11 +73,14 @@ func (k *KeepAliveHTTP) Execute(ctx context.Context, target Target) error {
 		return fmt.Errorf("connection failed: %w", err)
 	}
 	defer func() {
+		atomic.AddInt64(&k.activeConnections, -1)
 		conn.Close()
 		if k.metricsCallback != nil {
 			k.metricsCallback.RecordConnectionEnd(connID)
 		}
 	}()
+
+	atomic.AddInt64(&k.activeConnections, 1)
 
 	if k.metricsCallback != nil {
 		k.metricsCallback.RecordConnectionStart(connID, conn.RemoteAddr().String())

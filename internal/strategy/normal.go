@@ -7,17 +7,22 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 )
 
 type NormalHTTP struct {
-	client           *http.Client
-	timeout          time.Duration
+	client            *http.Client
+	timeout           time.Duration
 	activeConnections int64
 }
 
 func NewNormalHTTP(timeout time.Duration) *NormalHTTP {
+	n := &NormalHTTP{
+		timeout: timeout,
+	}
+
 	transport := &http.Transport{
 		MaxIdleConns:          0,
 		MaxIdleConnsPerHost:   0,
@@ -25,32 +30,38 @@ func NewNormalHTTP(timeout time.Duration) *NormalHTTP {
 		IdleConnTimeout:       90 * time.Second,
 		DisableKeepAlives:     false,
 		ExpectContinueTimeout: 1 * time.Second,
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			dialer := &net.Dialer{
-				Timeout:   30 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}
-			conn, err := dialer.DialContext(ctx, network, addr)
-			if err == nil {
-				atomic.AddInt64(&normalHTTPConnections, 1)
-			}
-			return conn, err
-		},
 	}
 
-	return &NormalHTTP{
-		client: &http.Client{
-			Timeout:   timeout,
-			Transport: transport,
-		},
-		timeout: timeout,
+	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		dialer := &net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}
+		conn, err := dialer.DialContext(ctx, network, addr)
+		if err != nil {
+			return nil, err
+		}
+
+		atomic.AddInt64(&n.activeConnections, 1)
+
+		return &trackedConn{
+			Conn: conn,
+			onClose: func() {
+				atomic.AddInt64(&n.activeConnections, -1)
+			},
+		}, nil
 	}
+
+	n.client = &http.Client{
+		Timeout:   timeout,
+		Transport: transport,
+	}
+
+	return n
 }
 
-var normalHTTPConnections int64
-
-func GetActiveConnections() int64 {
-	return atomic.LoadInt64(&normalHTTPConnections)
+func (n *NormalHTTP) ActiveConnections() int64 {
+	return atomic.LoadInt64(&n.activeConnections)
 }
 
 func (n *NormalHTTP) Execute(ctx context.Context, target Target) error {
@@ -88,4 +99,19 @@ func (n *NormalHTTP) Execute(ctx context.Context, target Target) error {
 
 func (n *NormalHTTP) Name() string {
 	return "normal-http"
+}
+
+type trackedConn struct {
+	net.Conn
+	onClose func()
+	once    sync.Once
+}
+
+func (c *trackedConn) Close() error {
+	c.once.Do(func() {
+		if c.onClose != nil {
+			c.onClose()
+		}
+	})
+	return c.Conn.Close()
 }

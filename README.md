@@ -19,12 +19,19 @@ High-performance load testing tool with Slowloris attack support and advanced me
   - Percentile analysis (p50, p95, p99)
   - Standard deviation tracking
   - Success rate monitoring
+  - TCP session accuracy (goroutines vs real sockets)
+  - Connection lifetime, timeout, and reconnect telemetry
 
 - **Production Ready**
   - Session lifetime limits (5min max)
   - Graceful shutdown
   - Context-based cancellation
   - Connection pooling
+
+- **Keep-Alive Session Assurance**
+  - Sends complete HTTP/1.1 requests before entering keep-alive loops
+  - ±10% deviation alerts between requested sessions and open TCP sockets
+  - Configurable slow ping intervals for 100-3000+ concurrent sessions
 
 - **AWS Deployment**
   - Docker containerization
@@ -170,6 +177,20 @@ p95: 150 req/s  ← 5% of seconds had this spike
 p99: 200 req/s  ← Rare but important outliers
 ```
 
+### Session Accuracy & Connection Health
+
+- **Active Goroutines**: logical session count requested via `--sessions`.
+- **TCP Connections**: actual sockets kept alive after a complete HTTP/1.1 handshake.
+- **Session Accuracy**: `(TCP Connections / Active Goroutines) * 100`. Deviations above ±10% trigger a warning so you know when sockets are falling behind the requested concurrency.
+- **Active Conns (tracked)**: sockets currently exchanging keep-alive pings; helps isolate stuck sessions.
+- **Socket Timeouts / Reconnects**: increments when keep-alive writes or reads miss their deadlines.
+- **Avg/Min/Max Conn Lifetime**: measures how long each session stayed alive (max 5 minutes by design).
+
+> Quick validation (100세션 이하 확인):
+> ```bash
+> ./loadtest --target http://httpbin.org/get --sessions 50 --rate 50 --duration 30s
+> ```
+> TCP Connections 값이 45~55 범위(±10%)를 유지하면 Keep-Alive 기반 세션 유지가 정상적으로 이루어지고 있음을 의미합니다.
 ## AWS Deployment
 
 ### Quick Deploy

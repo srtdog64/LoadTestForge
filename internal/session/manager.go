@@ -47,17 +47,17 @@ func NewManager(
 		sessions:       make(map[string]context.CancelFunc),
 	}
 
-	if keepAlive, ok := strat.(interface {
-		SetMetricsCallback(strategy.MetricsCallback)
-	}); ok {
-		keepAlive.SetMetricsCallback(metricsCollector)
+	if metricsAware, ok := strat.(strategy.MetricsAware); ok {
+		metricsAware.SetMetricsCallback(metricsCollector)
 	}
 
 	return m
 }
 
 func (m *Manager) Run(ctx context.Context) error {
-	go m.trackConnections(ctx)
+	if tracker, ok := m.strategy.(strategy.ConnectionTracker); ok {
+		go m.trackConnections(ctx, tracker)
+	}
 	
 	if m.rampUpDuration > 0 {
 		return m.runWithRampUp(ctx)
@@ -65,7 +65,7 @@ func (m *Manager) Run(ctx context.Context) error {
 	return m.runSteadyState(ctx)
 }
 
-func (m *Manager) trackConnections(ctx context.Context) {
+func (m *Manager) trackConnections(ctx context.Context, tracker strategy.ConnectionTracker) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -74,8 +74,7 @@ func (m *Manager) trackConnections(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			tcpConns := strategy.GetActiveConnections()
-			m.metrics.SetTCPConnections(tcpConns)
+			m.metrics.SetTCPConnections(tracker.ActiveConnections())
 		}
 	}
 }

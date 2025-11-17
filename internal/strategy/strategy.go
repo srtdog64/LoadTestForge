@@ -1,8 +1,6 @@
 package strategy
 
-import (
-	"context"
-)
+import "context"
 
 type Target struct {
 	URL     string
@@ -14,6 +12,22 @@ type Target struct {
 type AttackStrategy interface {
 	Execute(ctx context.Context, target Target) error
 	Name() string
+}
+
+type MetricsCallback interface {
+	RecordConnectionStart(connID, remoteAddr string)
+	RecordConnectionActivity(connID string)
+	RecordConnectionEnd(connID string)
+	RecordSocketTimeout()
+	RecordSocketReconnect()
+}
+
+type MetricsAware interface {
+	SetMetricsCallback(callback MetricsCallback)
+}
+
+type ConnectionTracker interface {
+	ActiveConnections() int64
 }
 
 type Result struct {
