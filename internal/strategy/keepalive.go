@@ -21,14 +21,16 @@ type KeepAliveHTTP struct {
 	userAgents        []string
 	metricsCallback   MetricsCallback
 	activeConnections int64
+	localAddr         *net.TCPAddr
 }
 
-func NewKeepAliveHTTP(pingInterval time.Duration) *KeepAliveHTTP {
+func NewKeepAliveHTTP(pingInterval time.Duration, bindIP string) *KeepAliveHTTP {
 	return &KeepAliveHTTP{
 		pingInterval:      pingInterval,
 		connectionTimeout: 10 * time.Second,
 		maxSessionLife:    5 * time.Minute,
 		userAgents:        defaultUserAgents,
+		localAddr:         newLocalTCPAddr(bindIP),
 	}
 }
 
@@ -53,7 +55,8 @@ func (k *KeepAliveHTTP) Execute(ctx context.Context, target Target) error {
 	
 	var conn net.Conn
 	dialer := &net.Dialer{
-		Timeout: k.connectionTimeout,
+		Timeout:   k.connectionTimeout,
+		LocalAddr: k.localAddr,
 	}
 
 	if useTLS {

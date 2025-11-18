@@ -9,6 +9,7 @@ type Config struct {
 	Strategy    StrategyConfig
 	Performance PerformanceConfig
 	Reporting   ReportingConfig
+	BindIP      string
 }
 
 type TargetConfig struct {

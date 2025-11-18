@@ -16,11 +16,13 @@ type NormalHTTP struct {
 	client            *http.Client
 	timeout           time.Duration
 	activeConnections int64
+	localAddr         *net.TCPAddr
 }
 
-func NewNormalHTTP(timeout time.Duration) *NormalHTTP {
+func NewNormalHTTP(timeout time.Duration, bindIP string) *NormalHTTP {
 	n := &NormalHTTP{
-		timeout: timeout,
+		timeout:   timeout,
+		localAddr: newLocalTCPAddr(bindIP),
 	}
 
 	transport := &http.Transport{
@@ -36,6 +38,7 @@ func NewNormalHTTP(timeout time.Duration) *NormalHTTP {
 		dialer := &net.Dialer{
 			Timeout:   30 * time.Second,
 			KeepAlive: 30 * time.Second,
+			LocalAddr: n.localAddr,
 		}
 		conn, err := dialer.DialContext(ctx, network, addr)
 		if err != nil {

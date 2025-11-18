@@ -1,6 +1,9 @@
 package strategy
 
-import "context"
+import (
+	"context"
+	"net"
+)
 
 type Target struct {
 	URL     string
@@ -35,4 +38,17 @@ type Result struct {
 	Error        error
 	ResponseTime int64
 	StatusCode   int
+}
+
+func newLocalTCPAddr(bindIP string) *net.TCPAddr {
+	if bindIP == "" {
+		return nil
+	}
+
+	ip := net.ParseIP(bindIP)
+	if ip == nil {
+		return nil
+	}
+
+	return &net.TCPAddr{IP: ip}
 }

@@ -15,7 +15,7 @@ func TestNormalHTTP_Execute(t *testing.T) {
 	}))
 	defer server.Close()
 
-	strategy := NewNormalHTTP(5 * time.Second)
+	strategy := NewNormalHTTP(5*time.Second, "")
 	target := Target{
 		URL:    server.URL,
 		Method: "GET",
@@ -39,7 +39,7 @@ func TestNormalHTTP_ExecuteWithTimeout(t *testing.T) {
 	}))
 	defer server.Close()
 
-	strategy := NewNormalHTTP(500 * time.Millisecond)
+	strategy := NewNormalHTTP(500*time.Millisecond, "")
 	target := Target{
 		URL:    server.URL,
 		Method: "GET",
@@ -59,7 +59,7 @@ func TestNormalHTTP_ExecuteWithError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	strategy := NewNormalHTTP(5 * time.Second)
+	strategy := NewNormalHTTP(5*time.Second, "")
 	target := Target{
 		URL:    server.URL,
 		Method: "GET",
@@ -74,7 +74,7 @@ func TestNormalHTTP_ExecuteWithError(t *testing.T) {
 }
 
 func TestNormalHTTP_Name(t *testing.T) {
-	strategy := NewNormalHTTP(5 * time.Second)
+	strategy := NewNormalHTTP(5*time.Second, "")
 	if strategy.Name() != "normal-http" {
 		t.Errorf("Expected name 'normal-http', got '%s'", strategy.Name())
 	}
@@ -86,7 +86,7 @@ func BenchmarkNormalHTTP_Execute(b *testing.B) {
 	}))
 	defer server.Close()
 
-	strategy := NewNormalHTTP(5 * time.Second)
+	strategy := NewNormalHTTP(5*time.Second, "")
 	target := Target{
 		URL:    server.URL,
 		Method: "GET",
