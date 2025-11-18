@@ -8,7 +8,6 @@ import (
 	"io"
 	"math/rand"
 	"net"
-	"net/url"
 	"strings"
 	"sync/atomic"
 	"time"
