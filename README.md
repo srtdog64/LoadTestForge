@@ -146,7 +146,21 @@ Status:          ✓ Within target (±10%)
   --keepalive 15s
 ```
 
-### 4. Spike Test
+### 4. Slowloris Internal Host Example
+
+```bash
+# Slowloris attack with 600 concurrent sessions against an internal HTTP service
+./loadtest \
+  --target http://192.168.0.100 \
+  --sessions 600 \
+  --strategy slowloris
+```
+
+This is the quickest way to verify the Slowloris strategy on a LAN target. You can append
+`--bind-ip <local-ip>` or tweak `--rate`/`--keepalive` to match lab conditions, but the key is
+setting `--strategy slowloris` alongside a valid HTTP URL.
+
+### 5. Spike Test
 
 ```bash
 # Instant spike to 10000 sessions
@@ -157,7 +171,7 @@ Status:          ✓ Within target (±10%)
   --duration 30s
 ```
 
-### 5. Multi-IP Load Distribution
+### 6. Multi-IP Load Distribution
 
 ```bash
 # Single IP (limited to ~2,400 sessions by target DDoS protection)
