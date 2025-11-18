@@ -138,6 +138,9 @@ func parseTargetURL(targetURL string) (*url.URL, string, bool, error) {
 
 	scheme := strings.ToLower(parsed.Scheme)
 	if scheme != "http" && scheme != "https" {
+		if scheme == "" {
+			return nil, "", false, fmt.Errorf("missing scheme: URL must start with http:// or https:// (got: %s)", targetURL)
+		}
 		return nil, "", false, fmt.Errorf("unsupported scheme: %s (only http/https allowed)", scheme)
 	}
 
