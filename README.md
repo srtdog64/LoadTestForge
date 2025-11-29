@@ -86,7 +86,7 @@ make build
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--target` | (required) | Target URL (http:// or https://) |
-| `--strategy` | `keepalive` | Attack strategy (`normal`, `keepalive`, `slowloris`, `slowloris-keepalive`) |
+| `--strategy` | `keepalive` | Attack strategy (see below) |
 | `--sessions` | `100` | Target concurrent sessions |
 | `--rate` | `10` | Sessions per second to create |
 | `--duration` | `0` (infinite) | Test duration (e.g., `30s`, `5m`, `1h`) |
@@ -95,6 +95,23 @@ make build
 | `--method` | `GET` | HTTP method |
 | `--timeout` | `10s` | Request timeout |
 | `--keepalive` | `10s` | Keep-alive ping interval |
+| `--content-length` | `100000` | Content-Length for slow-post |
+| `--read-size` | `1` | Bytes to read per iteration for slow-read |
+| `--window-size` | `64` | TCP window size for slow-read |
+| `--post-size` | `1024` | POST data size for http-flood |
+| `--requests-per-conn` | `100` | Requests per connection for http-flood |
+
+### Available Strategies
+
+| Strategy | Description |
+|----------|-------------|
+| `normal` | Standard HTTP requests |
+| `keepalive` | HTTP with connection reuse (default) |
+| `slowloris` | Classic Slowloris (incomplete headers) |
+| `slowloris-keepalive` | Slowloris with complete headers |
+| `slow-post` | Slow POST body transmission |
+| `slow-read` | Slow response reading |
+| `http-flood` | High-volume request flooding |
 
 ## Examples
 
@@ -562,17 +579,151 @@ X-Keep-Alive-12345: ...\r\n
   --strategy slowloris-keepalive
 ```
 
+### 5. Slow POST (`--strategy slow-post`)
+
+**Purpose:** RUDY (R-U-Dead-Yet) attack simulation
+
+**How it works:**
+- Sends POST request with large Content-Length header
+- Transmits body data extremely slowly (1 byte per interval)
+- Server waits for complete body, holding connection open
+- Effective against servers with long POST timeouts
+
+**Technical details:**
+```
+Sent to server:
+POST /?12345 HTTP/1.1\r\n
+Host: example.com\r\n
+Content-Type: application/x-www-form-urlencoded\r\n
+Content-Length: 100000\r\n
+\r\n
+(complete headers)
+
+Then slowly:
+a (wait 10s)
+b (wait 10s)
+c (wait 10s)
+...
+```
+
+**Use case:**
+- Testing POST request timeout policies
+- Bypassing GET-focused rate limiters
+- Stress testing upload handlers
+
+**Example:**
+```bash
+./loadtest \
+  --target http://example.com/upload \
+  --sessions 1000 \
+  --rate 200 \
+  --strategy slow-post \
+  --content-length 100000
+```
+
+### 6. Slow Read (`--strategy slow-read`)
+
+**Purpose:** Slow response consumption attack
+
+**How it works:**
+- Sends complete HTTP request
+- Reads response extremely slowly (1 byte per interval)
+- Sets small TCP receive window to throttle server
+- Server must buffer response, consuming memory
+
+**Technical details:**
+```
+Client sends:
+GET / HTTP/1.1\r\n
+Host: example.com\r\n
+Accept-Encoding: identity\r\n  (no compression)
+\r\n
+
+Server sends response...
+
+Client reads:
+1 byte (wait 10s)
+1 byte (wait 10s)
+...
+
+TCP Window: 64 bytes (very small)
+```
+
+**Use case:**
+- Testing response buffering limits
+- Evaluating server memory under slow clients
+- Simulating mobile/slow network conditions
+
+**Example:**
+```bash
+./loadtest \
+  --target http://example.com/large-file \
+  --sessions 500 \
+  --rate 100 \
+  --strategy slow-read \
+  --read-size 1 \
+  --window-size 64
+```
+
+### 7. HTTP Flood (`--strategy http-flood`)
+
+**Purpose:** High-volume request flooding
+
+**How it works:**
+- Sends maximum requests as fast as possible
+- Randomizes User-Agent, Referer, query parameters
+- Reuses connections for efficiency
+- Can use GET or POST methods
+
+**Technical details:**
+```
+Rapid fire:
+GET /?r=12345678&cb=987654 HTTP/1.1
+GET /?r=23456789&cb=876543 HTTP/1.1
+GET /?r=34567890&cb=765432 HTTP/1.1
+... (100 requests per connection)
+
+Headers randomized each request:
+- User-Agent: (random from 10 browsers)
+- Referer: (random from popular sites)
+- Cache-Control: (random no-cache variant)
+```
+
+**Use case:**
+- Testing request throughput limits
+- Evaluating CDN/WAF effectiveness
+- Stress testing application layer
+
+**Example:**
+```bash
+# GET flood
+./loadtest \
+  --target http://example.com \
+  --sessions 500 \
+  --rate 200 \
+  --strategy http-flood \
+  --requests-per-conn 100
+
+# POST flood
+./loadtest \
+  --target http://example.com/api \
+  --sessions 500 \
+  --rate 200 \
+  --strategy http-flood \
+  --method POST \
+  --post-size 1024
+```
+
 ### Strategy Comparison
 
-| Feature | Normal | Keep-Alive | Classic Slowloris | Keep-Alive Slowloris |
-|---------|--------|------------|-------------------|----------------------|
-| **Request Complete** | ✓ | ✓ | ✗ | ✓ |
-| **Server Response** | ✓ | ✓ | ✗ | ✓ |
-| **Connection Reuse** | ✗ | ✓ | ✓ | ✓ |
-| **DDoS-like** | ✗ | ✗ | ✓ | Partial |
-| **Detection Risk** | Low | Low | High | Medium |
-| **Performance** | Medium | High | Highest | High |
-| **Max Sessions/IP** | 2000 | 2000 | 2400+ | 600 |
+| Feature | Normal | Keep-Alive | Slowloris | Slow POST | Slow Read | HTTP Flood |
+|---------|--------|------------|-----------|-----------|-----------|------------|
+| **Request Complete** | Yes | Yes | No | Yes | Yes | Yes |
+| **Server Response** | Yes | Yes | No | No | Yes | Yes |
+| **Connection Reuse** | No | Yes | Yes | Yes | Yes | Yes |
+| **Resource Exhaustion** | CPU | Connections | Connections | Connections | Memory | CPU/Bandwidth |
+| **Detection Risk** | Low | Low | High | Medium | Medium | High |
+| **Best For** | Throughput | Real traffic | Connection pool | Upload endpoints | Large responses | Raw volume |
 
 ### When to Use Each Strategy
 
@@ -586,16 +737,29 @@ X-Keep-Alive-12345: ...\r\n
 - Testing sustained load
 - General load testing (default choice)
 
-**Use Classic Slowloris when:**
+**Use Slowloris when:**
 - Testing DDoS protection systems
 - Need to bypass IP-based rate limits
 - Stress testing connection pools
 - Maximum sessions per IP required
 
-**Use Keep-Alive Slowloris when:**
-- Testing keep-alive timeout policies
-- Need safer Slowloris alternative
-- Classic Slowloris triggers IP blocks
+**Use Slow POST when:**
+- Testing upload/form handling
+- Bypassing GET-focused protections
+- Targeting POST-heavy APIs
+- Testing request body timeout policies
+
+**Use Slow Read when:**
+- Testing response buffering
+- Evaluating memory limits
+- Simulating slow network clients
+- Targeting large response endpoints
+
+**Use HTTP Flood when:**
+- Testing raw throughput capacity
+- Evaluating WAF/CDN effectiveness
+- Maximum request volume needed
+- Stress testing application logic
 
 ## Docker Usage
 

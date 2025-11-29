@@ -11,6 +11,9 @@ Slowloris 공격 지원 및 고급 메트릭을 갖춘 고성능 부하 테스�
   - Keep-Alive HTTP (연결 재사용)
   - Classic Slowloris (불완전한 헤더, DDoS 방어 우회)
   - Keep-Alive Slowloris (완전한 헤더, 안전한 테스트)
+  - Slow POST (RUDY - 큰 Content-Length, 느린 바디 전송)
+  - Slow Read (느린 응답 소비, TCP 윈도우 조작)
+  - HTTP Flood (대량 요청 플러딩)
   - HTTPS/TLS 지원 및 인증서 검증
 
 - **정밀한 속도 제어**
