@@ -23,6 +23,11 @@ type StrategyConfig struct {
 	Type              string
 	Timeout           time.Duration
 	KeepAliveInterval time.Duration
+	ContentLength     int
+	ReadSize          int
+	WindowSize        int
+	PostDataSize      int
+	RequestsPerConn   int
 }
 
 type PerformanceConfig struct {
@@ -50,6 +55,11 @@ func DefaultConfig() *Config {
 			Type:              "normal",
 			Timeout:           10 * time.Second,
 			KeepAliveInterval: 10 * time.Second,
+			ContentLength:     100000,
+			ReadSize:          1,
+			WindowSize:        64,
+			PostDataSize:      1024,
+			RequestsPerConn:   100,
 		},
 		Performance: PerformanceConfig{
 			TargetSessions: 100,

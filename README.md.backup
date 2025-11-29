@@ -9,9 +9,6 @@ High-performance load testing tool with Slowloris attack support and advanced me
   - Keep-Alive HTTP with connection reuse
   - Classic Slowloris (incomplete headers, bypass DDoS protection)
   - Keep-Alive Slowloris (complete headers, safer testing)
-  - Slow POST (RUDY - large Content-Length, slow body transmission)
-  - Slow Read (slow response consumption, TCP window manipulation)
-  - HTTP Flood (high-volume request flooding)
   - HTTPS/TLS support with proper certificate validation
 
 - **Precise Rate Control**
