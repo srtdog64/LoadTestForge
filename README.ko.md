@@ -88,7 +88,7 @@ make build
 | 플래그 | 기본값 | 설명 |
 |------|---------|------|
 | `--target` | (필수) | 타겟 URL (http:// 또는 https://) |
-| `--strategy` | `keepalive` | 공격 전략 (`normal`, `keepalive`, `slowloris`, `slowloris-keepalive`) |
+| `--strategy` | `keepalive` | 공격 전략 (아래 표 참조) |
 | `--sessions` | `100` | 목표 동시 세션 수 |
 | `--rate` | `10` | 초당 생성할 세션 수 |
 | `--duration` | `0` (무한) | 테스트 지속 시간 (예: `30s`, `5m`, `1h`) |
@@ -97,6 +97,23 @@ make build
 | `--method` | `GET` | HTTP 메서드 |
 | `--timeout` | `10s` | 요청 타임아웃 |
 | `--keepalive` | `10s` | Keep-alive ping 간격 |
+| `--content-length` | `100000` | slow-post용 Content-Length |
+| `--read-size` | `1` | slow-read용 반복당 읽기 바이트 |
+| `--window-size` | `64` | slow-read용 TCP 윈도우 크기 |
+| `--post-size` | `1024` | http-flood용 POST 데이터 크기 |
+| `--requests-per-conn` | `100` | http-flood용 연결당 요청 수 |
+
+### 사용 가능한 전략
+
+| 전략 | 설명 |
+|----------|------|
+| `normal` | 표준 HTTP 요청 |
+| `keepalive` | 연결 재사용 HTTP (기본값) |
+| `slowloris` | Classic Slowloris (불완전한 헤더) |
+| `slowloris-keepalive` | 완전한 헤더의 Slowloris |
+| `slow-post` | 느린 POST 바디 전송 |
+| `slow-read` | 느린 응답 읽기 |
+| `http-flood` | 대량 요청 플러딩 |
 
 ## 예제
 
