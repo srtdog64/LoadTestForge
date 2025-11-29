@@ -10,81 +10,44 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jdw/loadtestforge/internal/config"
 	"github.com/jdw/loadtestforge/internal/metrics"
 	"github.com/jdw/loadtestforge/internal/strategy"
 	"golang.org/x/time/rate"
 )
 
 type Manager struct {
-	strategy       strategy.AttackStrategy
-	target         strategy.Target
-	targetSessions int
-	sessionsPerSec int
-	rampUpDuration time.Duration
-	limiter        *rate.Limiter
-	metrics        *metrics.Collector
-
-	// Pulsing pattern support
-	pulseEnabled   bool
-	pulseHighTime  time.Duration
-	pulseLowTime   time.Duration
-	pulseLowRatio  float64 // e.g., 0.1 means 10% of target during low phase
-	pulseWaveType  string  // "square", "sine", "sawtooth"
+	strategy strategy.AttackStrategy
+	target   strategy.Target
+	perf     config.PerformanceConfig
+	limiter  *rate.Limiter
+	metrics  *metrics.Collector
 
 	activeSessions int32
 	mu             sync.Mutex
 	sessions       map[string]context.CancelFunc
 }
 
-type PulseConfig struct {
-	Enabled  bool
-	HighTime time.Duration
-	LowTime  time.Duration
-	LowRatio float64
-	WaveType string
-}
-
 func NewManager(
 	strat strategy.AttackStrategy,
 	target strategy.Target,
-	targetSessions int,
-	sessionsPerSec int,
-	rampUpDuration time.Duration,
+	perf config.PerformanceConfig,
 	metricsCollector *metrics.Collector,
-) *Manager {
-	return NewManagerWithPulse(strat, target, targetSessions, sessionsPerSec, rampUpDuration, metricsCollector, PulseConfig{})
-}
-
-func NewManagerWithPulse(
-	strat strategy.AttackStrategy,
-	target strategy.Target,
-	targetSessions int,
-	sessionsPerSec int,
-	rampUpDuration time.Duration,
-	metricsCollector *metrics.Collector,
-	pulse PulseConfig,
 ) *Manager {
 	m := &Manager{
-		strategy:       strat,
-		target:         target,
-		targetSessions: targetSessions,
-		sessionsPerSec: sessionsPerSec,
-		rampUpDuration: rampUpDuration,
-		limiter:        rate.NewLimiter(rate.Limit(sessionsPerSec), sessionsPerSec),
-		metrics:        metricsCollector,
-		sessions:       make(map[string]context.CancelFunc),
-		pulseEnabled:   pulse.Enabled,
-		pulseHighTime:  pulse.HighTime,
-		pulseLowTime:   pulse.LowTime,
-		pulseLowRatio:  pulse.LowRatio,
-		pulseWaveType:  pulse.WaveType,
+		strategy: strat,
+		target:   target,
+		perf:     perf,
+		limiter:  rate.NewLimiter(rate.Limit(perf.SessionsPerSec), perf.SessionsPerSec),
+		metrics:  metricsCollector,
+		sessions: make(map[string]context.CancelFunc),
 	}
 
-	if m.pulseLowRatio <= 0 {
-		m.pulseLowRatio = 0.1
+	if m.perf.Pulse.LowRatio <= 0 {
+		m.perf.Pulse.LowRatio = 0.1
 	}
-	if m.pulseWaveType == "" {
-		m.pulseWaveType = "square"
+	if m.perf.Pulse.WaveType == "" {
+		m.perf.Pulse.WaveType = "square"
 	}
 
 	if metricsAware, ok := strat.(strategy.MetricsAware); ok {
@@ -99,10 +62,10 @@ func (m *Manager) Run(ctx context.Context) error {
 		go m.trackConnections(ctx, tracker)
 	}
 
-	if m.pulseEnabled {
+	if m.perf.Pulse.Enabled {
 		return m.runWithPulse(ctx)
 	}
-	if m.rampUpDuration > 0 {
+	if m.perf.RampUpDuration > 0 {
 		return m.runWithRampUp(ctx)
 	}
 	return m.runSteadyState(ctx)
@@ -124,7 +87,8 @@ func (m *Manager) trackConnections(ctx context.Context, tracker strategy.Connect
 
 func (m *Manager) runWithRampUp(ctx context.Context) error {
 	startTime := time.Now()
-	ticker := time.NewTicker(100 * time.Millisecond)
+	tickInterval := 100 * time.Millisecond
+	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
 
 	for {
@@ -134,27 +98,21 @@ func (m *Manager) runWithRampUp(ctx context.Context) error {
 			return ctx.Err()
 		case <-ticker.C:
 			elapsed := time.Since(startTime)
-			
+
 			var currentTarget int
-			if elapsed < m.rampUpDuration {
-				progress := float64(elapsed) / float64(m.rampUpDuration)
-				currentTarget = int(float64(m.targetSessions) * progress)
+			if elapsed < m.perf.RampUpDuration {
+				progress := float64(elapsed) / float64(m.perf.RampUpDuration)
+				currentTarget = int(float64(m.perf.TargetSessions) * progress)
 				if currentTarget < 1 {
 					currentTarget = 1
 				}
 			} else {
-				currentTarget = m.targetSessions
+				currentTarget = m.perf.TargetSessions
 			}
 
-			current := atomic.LoadInt32(&m.activeSessions)
-			if int(current) < currentTarget {
-				if err := m.limiter.Wait(ctx); err != nil {
-					if ctx.Err() != nil {
-						return ctx.Err()
-					}
-					continue
-				}
-				go m.launchSession(ctx)
+			current := int(atomic.LoadInt32(&m.activeSessions))
+			if current < currentTarget {
+				m.spawnSessions(ctx, currentTarget-current, tickInterval)
 			}
 		}
 	}
@@ -164,7 +122,8 @@ func (m *Manager) runWithPulse(ctx context.Context) error {
 	cycleStart := time.Now()
 	isHighPhase := true
 
-	ticker := time.NewTicker(50 * time.Millisecond)
+	tickInterval := 50 * time.Millisecond
+	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
 
 	for {
@@ -176,10 +135,10 @@ func (m *Manager) runWithPulse(ctx context.Context) error {
 			elapsed := time.Since(cycleStart)
 
 			// Phase transition check
-			if isHighPhase && elapsed > m.pulseHighTime {
+			if isHighPhase && elapsed > m.perf.Pulse.HighTime {
 				isHighPhase = false
 				cycleStart = time.Now()
-			} else if !isHighPhase && elapsed > m.pulseLowTime {
+			} else if !isHighPhase && elapsed > m.perf.Pulse.LowTime {
 				isHighPhase = true
 				cycleStart = time.Now()
 			}
@@ -188,31 +147,47 @@ func (m *Manager) runWithPulse(ctx context.Context) error {
 			currentTarget := m.calculatePulseTarget(isHighPhase, elapsed)
 			current := int(atomic.LoadInt32(&m.activeSessions))
 
-			// Scale UP: create sessions if below target
+			// Scale UP: non-blocking spawn (limit per tick to prevent control loop blocking)
 			if current < currentTarget {
-				needed := currentTarget - current
-				for i := 0; i < needed; i++ {
-					if err := m.limiter.Wait(ctx); err != nil {
-						if ctx.Err() != nil {
-							return ctx.Err()
-						}
-						break
-					}
-					go m.launchSession(ctx)
-				}
+				m.spawnSessions(ctx, currentTarget-current, tickInterval)
 			}
 
 			// Scale DOWN: prune sessions if above target (Hard Kill)
 			// Apply damping factor (50%) to prevent overshooting
 			if current > currentTarget {
 				excess := current - currentTarget
-				pruneCount := (excess + 1) / 2 // 50% damping to prevent overshooting
+				pruneCount := (excess + 1) / 2
 				if pruneCount < 1 {
 					pruneCount = 1
 				}
 				m.pruneSessions(pruneCount)
 			}
 		}
+	}
+}
+
+// spawnSessions creates sessions up to the limit allowed per tick interval.
+// This prevents blocking the control loop when needed count is large.
+func (m *Manager) spawnSessions(ctx context.Context, needed int, tickInterval time.Duration) {
+	// Calculate max sessions creatable in this tick (with 1.5x burst allowance)
+	maxPerTick := int(float64(m.perf.SessionsPerSec) * tickInterval.Seconds() * 1.5)
+	if maxPerTick < 1 {
+		maxPerTick = 1
+	}
+
+	spawnCount := needed
+	if spawnCount > maxPerTick {
+		spawnCount = maxPerTick
+	}
+
+	for i := 0; i < spawnCount; i++ {
+		if err := m.limiter.Wait(ctx); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			break
+		}
+		go m.launchSession(ctx)
 	}
 }
 
@@ -230,26 +205,25 @@ func (m *Manager) pruneSessions(count int) {
 		cancel()
 		// Note: Actual map deletion and counter decrement happens in launchSession's defer.
 		// We only send the cancel signal here.
-		_ = id // suppress unused warning
+		_ = id
 		pruned++
 	}
 }
 
 func (m *Manager) calculatePulseTarget(isHigh bool, elapsed time.Duration) int {
-	highTarget := m.targetSessions
-	lowTarget := int(float64(m.targetSessions) * m.pulseLowRatio)
+	highTarget := m.perf.TargetSessions
+	lowTarget := int(float64(m.perf.TargetSessions) * m.perf.Pulse.LowRatio)
 	if lowTarget < 1 {
 		lowTarget = 1
 	}
 
-	switch m.pulseWaveType {
+	switch m.perf.Pulse.WaveType {
 	case "sine":
-		// Sine wave oscillation
 		var phaseDuration time.Duration
 		if isHigh {
-			phaseDuration = m.pulseHighTime
+			phaseDuration = m.perf.Pulse.HighTime
 		} else {
-			phaseDuration = m.pulseLowTime
+			phaseDuration = m.perf.Pulse.LowTime
 		}
 
 		progress := float64(elapsed) / float64(phaseDuration)
@@ -257,20 +231,16 @@ func (m *Manager) calculatePulseTarget(isHigh bool, elapsed time.Duration) int {
 			progress = 1
 		}
 
-		// Sine interpolation between high and low
 		if isHigh {
-			// High phase: start high, potentially dip slightly
 			return highTarget
-		} else {
-			// Low phase: use sine to smoothly transition
-			sineValue := (1 + math.Sin(progress*math.Pi-math.Pi/2)) / 2
-			return lowTarget + int(float64(highTarget-lowTarget)*sineValue)
 		}
+		// Low phase: use sine to smoothly transition
+		sineValue := (1 + math.Sin(progress*math.Pi-math.Pi/2)) / 2
+		return lowTarget + int(float64(highTarget-lowTarget)*sineValue)
 
 	case "sawtooth":
-		// Sawtooth: gradual rise, sudden drop
 		if isHigh {
-			progress := float64(elapsed) / float64(m.pulseHighTime)
+			progress := float64(elapsed) / float64(m.perf.Pulse.HighTime)
 			if progress > 1 {
 				progress = 1
 			}
@@ -281,7 +251,6 @@ func (m *Manager) calculatePulseTarget(isHigh bool, elapsed time.Duration) int {
 	case "square":
 		fallthrough
 	default:
-		// Square wave: instant transition
 		if isHigh {
 			return highTarget
 		}
@@ -290,7 +259,8 @@ func (m *Manager) calculatePulseTarget(isHigh bool, elapsed time.Duration) int {
 }
 
 func (m *Manager) runSteadyState(ctx context.Context) error {
-	ticker := time.NewTicker(100 * time.Millisecond)
+	tickInterval := 100 * time.Millisecond
+	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
 
 	for {
@@ -299,15 +269,9 @@ func (m *Manager) runSteadyState(ctx context.Context) error {
 			m.shutdownAll()
 			return ctx.Err()
 		case <-ticker.C:
-			current := atomic.LoadInt32(&m.activeSessions)
-			if int(current) < m.targetSessions {
-				if err := m.limiter.Wait(ctx); err != nil {
-					if ctx.Err() != nil {
-						return ctx.Err()
-					}
-					continue
-				}
-				go m.launchSession(ctx)
+			current := int(atomic.LoadInt32(&m.activeSessions))
+			if current < m.perf.TargetSessions {
+				m.spawnSessions(ctx, m.perf.TargetSessions-current, tickInterval)
 			}
 		}
 	}
