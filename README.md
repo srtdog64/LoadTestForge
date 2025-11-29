@@ -844,6 +844,8 @@ email=aaaaaa@aaaaaa!
 - Oscillates load between high and low levels
 - Tests scaling response time and hysteresis
 - Exposes scaling lag and thrashing issues
+- **Active Pruning**: Sessions are forcefully terminated during scale-down (Hard Kill)
+- **Non-blocking Control Loop**: Rate-limited spawning prevents control loop blocking
 
 **Wave Types:**
 
@@ -853,11 +855,26 @@ email=aaaaaa@aaaaaa!
 | `sine` | Smooth sinusoidal oscillation |
 | `sawtooth` | Gradual rise, sudden drop |
 
+**Technical details:**
+```
+Scale UP (Low -> High):
+- Non-blocking: spawns only (rate * tick_interval * 1.5) sessions per 50ms tick
+- Prevents control loop blocking when transitioning to thousands of sessions
+- Example: rate=100/s, tick=50ms -> max 7-8 sessions/tick
+
+Scale DOWN (High -> Low):
+- Active Pruning with 50% damping factor
+- Forcefully cancels excess sessions (simulates client disconnection)
+- Damping prevents overshooting due to async goroutine termination
+- Example: excess=900 -> prune 450 this tick, re-evaluate next tick
+```
+
 **Use case:**
 - Testing auto-scaling policies
 - Finding scale-up/scale-down lag
 - Cloud cost optimization testing
 - Chaos engineering
+- Testing server behavior under sudden client disconnections
 
 **Example:**
 ```bash
@@ -881,6 +898,17 @@ email=aaaaaa@aaaaaa!
   --pulse-wave sine \
   --pulse-high 1m \
   --pulse-low 1m
+
+# Sawtooth: gradual ramp to 2000, instant drop to 200
+./loadtest \
+  --target http://example.com \
+  --sessions 2000 \
+  --rate 200 \
+  --pulse \
+  --pulse-wave sawtooth \
+  --pulse-high 1m \
+  --pulse-low 10s \
+  --pulse-ratio 0.1
 ```
 
 ### Strategy Comparison
