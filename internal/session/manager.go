@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -23,9 +24,24 @@ type Manager struct {
 	limiter        *rate.Limiter
 	metrics        *metrics.Collector
 
+	// Pulsing pattern support
+	pulseEnabled   bool
+	pulseHighTime  time.Duration
+	pulseLowTime   time.Duration
+	pulseLowRatio  float64 // e.g., 0.1 means 10% of target during low phase
+	pulseWaveType  string  // "square", "sine", "sawtooth"
+
 	activeSessions int32
 	mu             sync.Mutex
 	sessions       map[string]context.CancelFunc
+}
+
+type PulseConfig struct {
+	Enabled  bool
+	HighTime time.Duration
+	LowTime  time.Duration
+	LowRatio float64
+	WaveType string
 }
 
 func NewManager(
@@ -36,6 +52,18 @@ func NewManager(
 	rampUpDuration time.Duration,
 	metricsCollector *metrics.Collector,
 ) *Manager {
+	return NewManagerWithPulse(strat, target, targetSessions, sessionsPerSec, rampUpDuration, metricsCollector, PulseConfig{})
+}
+
+func NewManagerWithPulse(
+	strat strategy.AttackStrategy,
+	target strategy.Target,
+	targetSessions int,
+	sessionsPerSec int,
+	rampUpDuration time.Duration,
+	metricsCollector *metrics.Collector,
+	pulse PulseConfig,
+) *Manager {
 	m := &Manager{
 		strategy:       strat,
 		target:         target,
@@ -45,6 +73,18 @@ func NewManager(
 		limiter:        rate.NewLimiter(rate.Limit(sessionsPerSec), sessionsPerSec),
 		metrics:        metricsCollector,
 		sessions:       make(map[string]context.CancelFunc),
+		pulseEnabled:   pulse.Enabled,
+		pulseHighTime:  pulse.HighTime,
+		pulseLowTime:   pulse.LowTime,
+		pulseLowRatio:  pulse.LowRatio,
+		pulseWaveType:  pulse.WaveType,
+	}
+
+	if m.pulseLowRatio <= 0 {
+		m.pulseLowRatio = 0.1
+	}
+	if m.pulseWaveType == "" {
+		m.pulseWaveType = "square"
 	}
 
 	if metricsAware, ok := strat.(strategy.MetricsAware); ok {
@@ -58,7 +98,10 @@ func (m *Manager) Run(ctx context.Context) error {
 	if tracker, ok := m.strategy.(strategy.ConnectionTracker); ok {
 		go m.trackConnections(ctx, tracker)
 	}
-	
+
+	if m.pulseEnabled {
+		return m.runWithPulse(ctx)
+	}
 	if m.rampUpDuration > 0 {
 		return m.runWithRampUp(ctx)
 	}
@@ -114,6 +157,135 @@ func (m *Manager) runWithRampUp(ctx context.Context) error {
 				go m.launchSession(ctx)
 			}
 		}
+	}
+}
+
+func (m *Manager) runWithPulse(ctx context.Context) error {
+	cycleStart := time.Now()
+	isHighPhase := true
+
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			m.shutdownAll()
+			return ctx.Err()
+		case <-ticker.C:
+			elapsed := time.Since(cycleStart)
+
+			// Phase transition check
+			if isHighPhase && elapsed > m.pulseHighTime {
+				isHighPhase = false
+				cycleStart = time.Now()
+			} else if !isHighPhase && elapsed > m.pulseLowTime {
+				isHighPhase = true
+				cycleStart = time.Now()
+			}
+
+			// Calculate current target based on wave type
+			currentTarget := m.calculatePulseTarget(isHighPhase, elapsed)
+			current := int(atomic.LoadInt32(&m.activeSessions))
+
+			// Scale UP: create sessions if below target
+			if current < currentTarget {
+				needed := currentTarget - current
+				for i := 0; i < needed; i++ {
+					if err := m.limiter.Wait(ctx); err != nil {
+						if ctx.Err() != nil {
+							return ctx.Err()
+						}
+						break
+					}
+					go m.launchSession(ctx)
+				}
+			}
+
+			// Scale DOWN: prune sessions if above target (Hard Kill)
+			// Apply damping factor (50%) to prevent overshooting
+			if current > currentTarget {
+				excess := current - currentTarget
+				pruneCount := (excess + 1) / 2 // 50% damping to prevent overshooting
+				if pruneCount < 1 {
+					pruneCount = 1
+				}
+				m.pruneSessions(pruneCount)
+			}
+		}
+	}
+}
+
+// pruneSessions forcefully terminates the specified number of sessions.
+// This simulates client disconnection (Hard Kill) for stress testing.
+func (m *Manager) pruneSessions(count int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	pruned := 0
+	for id, cancel := range m.sessions {
+		if pruned >= count {
+			break
+		}
+		cancel()
+		// Note: Actual map deletion and counter decrement happens in launchSession's defer.
+		// We only send the cancel signal here.
+		_ = id // suppress unused warning
+		pruned++
+	}
+}
+
+func (m *Manager) calculatePulseTarget(isHigh bool, elapsed time.Duration) int {
+	highTarget := m.targetSessions
+	lowTarget := int(float64(m.targetSessions) * m.pulseLowRatio)
+	if lowTarget < 1 {
+		lowTarget = 1
+	}
+
+	switch m.pulseWaveType {
+	case "sine":
+		// Sine wave oscillation
+		var phaseDuration time.Duration
+		if isHigh {
+			phaseDuration = m.pulseHighTime
+		} else {
+			phaseDuration = m.pulseLowTime
+		}
+
+		progress := float64(elapsed) / float64(phaseDuration)
+		if progress > 1 {
+			progress = 1
+		}
+
+		// Sine interpolation between high and low
+		if isHigh {
+			// High phase: start high, potentially dip slightly
+			return highTarget
+		} else {
+			// Low phase: use sine to smoothly transition
+			sineValue := (1 + math.Sin(progress*math.Pi-math.Pi/2)) / 2
+			return lowTarget + int(float64(highTarget-lowTarget)*sineValue)
+		}
+
+	case "sawtooth":
+		// Sawtooth: gradual rise, sudden drop
+		if isHigh {
+			progress := float64(elapsed) / float64(m.pulseHighTime)
+			if progress > 1 {
+				progress = 1
+			}
+			return lowTarget + int(float64(highTarget-lowTarget)*progress)
+		}
+		return lowTarget
+
+	case "square":
+		fallthrough
+	default:
+		// Square wave: instant transition
+		if isHigh {
+			return highTarget
+		}
+		return lowTarget
 	}
 }
 

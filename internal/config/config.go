@@ -28,6 +28,21 @@ type StrategyConfig struct {
 	WindowSize        int
 	PostDataSize      int
 	RequestsPerConn   int
+	// H2 Flood settings
+	MaxStreams  int
+	BurstSize   int
+	// Heavy Payload settings
+	PayloadType  string
+	PayloadDepth int
+	PayloadSize  int
+}
+
+type PulseConfig struct {
+	Enabled  bool
+	HighTime time.Duration
+	LowTime  time.Duration
+	LowRatio float64
+	WaveType string // "square", "sine", "sawtooth"
 }
 
 type PerformanceConfig struct {
@@ -35,6 +50,7 @@ type PerformanceConfig struct {
 	SessionsPerSec int
 	Duration       time.Duration
 	RampUpDuration time.Duration
+	Pulse          PulseConfig
 }
 
 type ReportingConfig struct {
@@ -60,12 +76,24 @@ func DefaultConfig() *Config {
 			WindowSize:        64,
 			PostDataSize:      1024,
 			RequestsPerConn:   100,
+			MaxStreams:        100,
+			BurstSize:         10,
+			PayloadType:       "deep-json",
+			PayloadDepth:      50,
+			PayloadSize:       10000,
 		},
 		Performance: PerformanceConfig{
 			TargetSessions: 100,
 			SessionsPerSec: 10,
 			Duration:       60 * time.Second,
 			RampUpDuration: 0,
+			Pulse: PulseConfig{
+				Enabled:  false,
+				HighTime: 30 * time.Second,
+				LowTime:  30 * time.Second,
+				LowRatio: 0.1,
+				WaveType: "square",
+			},
 		},
 		Reporting: ReportingConfig{
 			Interval:     2 * time.Second,

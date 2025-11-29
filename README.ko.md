@@ -363,17 +363,102 @@ X-Keep-Alive-12345: ...\r\n
   --strategy slowloris-keepalive
 ```
 
+### 5. Slow POST (`--strategy slow-post`)
+
+**목적:** RUDY (R-U-Dead-Yet) 공격 시뮬레이션
+
+**작동 방식:**
+- 큰 Content-Length 헤더로 POST 요청 전송
+- 바디 데이터를 매우 느리게 전송 (간격당 1 바이트)
+- 서버가 완전한 바디를 기다리며 연결 유지
+- 긴 POST 타임아웃을 가진 서버에 효과적
+
+**사용 사례:**
+- POST 요청 타임아웃 정책 테스트
+- GET 중심 속도 제한기 우회
+- 업로드 핸들러 스트레스 테스트
+
+**예제:**
+```bash
+./loadtest \
+  --target http://example.com/upload \
+  --sessions 1000 \
+  --rate 200 \
+  --strategy slow-post \
+  --content-length 100000
+```
+
+### 6. Slow Read (`--strategy slow-read`)
+
+**목적:** 느린 응답 소비 공격
+
+**작동 방식:**
+- 완전한 HTTP 요청 전송
+- 응답을 매우 느리게 읽음 (간격당 1 바이트)
+- 서버 스로틀링을 위해 작은 TCP 수신 윈도우 설정
+- 서버가 응답을 버퍼링해야 하며 메모리 소비
+
+**사용 사례:**
+- 응답 버퍼링 한계 테스트
+- 느린 클라이언트 하에서 서버 메모리 평가
+- 모바일/느린 네트워크 조건 시뮬레이션
+
+**예제:**
+```bash
+./loadtest \
+  --target http://example.com/large-file \
+  --sessions 500 \
+  --rate 100 \
+  --strategy slow-read \
+  --read-size 1 \
+  --window-size 64
+```
+
+### 7. HTTP Flood (`--strategy http-flood`)
+
+**목적:** 대량 요청 플러딩
+
+**작동 방식:**
+- 가능한 한 빠르게 최대 요청 전송
+- User-Agent, Referer, 쿼리 파라미터 랜덤화
+- 효율성을 위한 연결 재사용
+- GET 또는 POST 메서드 사용 가능
+
+**사용 사례:**
+- 요청 처리량 한계 테스트
+- CDN/WAF 효과 평가
+- 애플리케이션 레이어 스트레스 테스트
+
+**예제:**
+```bash
+# GET 플러드
+./loadtest \
+  --target http://example.com \
+  --sessions 500 \
+  --rate 200 \
+  --strategy http-flood \
+  --requests-per-conn 100
+
+# POST 플러드
+./loadtest \
+  --target http://example.com/api \
+  --sessions 500 \
+  --rate 200 \
+  --strategy http-flood \
+  --method POST \
+  --post-size 1024
+```
+
 ### 전략 비교
 
-| 기능 | Normal | Keep-Alive | Classic Slowloris | Keep-Alive Slowloris |
-|------|--------|------------|-------------------|----------------------|
-| **요청 완료** | ✓ | ✓ | ✗ | ✓ |
-| **서버 응답** | ✓ | ✓ | ✗ | ✓ |
-| **연결 재사용** | ✗ | ✓ | ✓ | ✓ |
-| **DDoS 유사** | ✗ | ✗ | ✓ | 부분적 |
-| **감지 위험** | 낮음 | 낮음 | 높음 | 중간 |
-| **성능** | 중간 | 높음 | 최고 | 높음 |
-| **IP당 최대 세션** | 2000 | 2000 | 2400+ | 600 |
+| 기능 | Normal | Keep-Alive | Slowloris | Slow POST | Slow Read | HTTP Flood |
+|------|--------|------------|-----------|-----------|-----------|------------|
+| **요청 완료** | Yes | Yes | No | Yes | Yes | Yes |
+| **서버 응답** | Yes | Yes | No | No | Yes | Yes |
+| **연결 재사용** | No | Yes | Yes | Yes | Yes | Yes |
+| **리소스 소진** | CPU | 연결 | 연결 | 연결 | 메모리 | CPU/대역폭 |
+| **감지 위험** | 낮음 | 낮음 | 높음 | 중간 | 중간 | 높음 |
+| **최적 대상** | 처리량 | 실제 트래픽 | 연결 풀 | 업로드 엔드포인트 | 큰 응답 | 순수 볼륨 |
 
 ### 각 전략을 사용하는 경우
 
@@ -387,16 +472,29 @@ X-Keep-Alive-12345: ...\r\n
 - 지속적인 부하 테스트
 - 일반 부하 테스트 (기본 선택)
 
-**Classic Slowloris 사용:**
+**Slowloris 사용:**
 - DDoS 보호 시스템 테스트
 - IP 기반 속도 제한 우회 필요
 - 연결 풀 스트레스 테스트
 - IP당 최대 세션 수 필요
 
-**Keep-Alive Slowloris 사용:**
-- Keep-alive 타임아웃 정책 테스트
-- 더 안전한 Slowloris 대안 필요
-- Classic Slowloris가 IP 차단을 트리거하는 경우
+**Slow POST 사용:**
+- 업로드/폼 처리 테스트
+- GET 중심 보호 우회
+- POST 중심 API 타겟팅
+- 요청 바디 타임아웃 정책 테스트
+
+**Slow Read 사용:**
+- 응답 버퍼링 테스트
+- 메모리 한계 평가
+- 느린 네트워크 클라이언트 시뮬레이션
+- 큰 응답 엔드포인트 타겟팅
+
+**HTTP Flood 사용:**
+- 순수 처리량 용량 테스트
+- WAF/CDN 효과 평가
+- 최대 요청 볼륨 필요
+- 애플리케이션 로직 스트레스 테스트
 
 ## 메트릭 이해
 

@@ -12,7 +12,16 @@ High-performance load testing tool with Slowloris attack support and advanced me
   - Slow POST (RUDY - large Content-Length, slow body transmission)
   - Slow Read (slow response consumption, TCP window manipulation)
   - HTTP Flood (high-volume request flooding)
+  - HTTP/2 Flood (multiplexing abuse, stream flooding)
+  - Heavy Payload (ReDoS, deep JSON/XML parsing stress)
   - HTTPS/TLS support with proper certificate validation
+
+- **Pulsing Load Patterns**
+  - Square wave (instant transition between high/low load)
+  - Sine wave (smooth oscillation)
+  - Sawtooth wave (gradual rise, sudden drop)
+  - Configurable high/low durations and ratios
+  - Stress test auto-scaling systems
 
 - **Precise Rate Control**
   - Token bucket algorithm for accurate rate limiting
@@ -100,6 +109,16 @@ make build
 | `--window-size` | `64` | TCP window size for slow-read |
 | `--post-size` | `1024` | POST data size for http-flood |
 | `--requests-per-conn` | `100` | Requests per connection for http-flood |
+| `--max-streams` | `100` | Max concurrent streams per connection for h2-flood |
+| `--burst-size` | `10` | Stream burst size for h2-flood |
+| `--payload-type` | `deep-json` | Payload type for heavy-payload (deep-json/redos/nested-xml/query-flood/multipart) |
+| `--payload-depth` | `50` | Nesting depth for heavy-payload |
+| `--payload-size` | `10000` | Payload size for heavy-payload |
+| `--pulse` | `false` | Enable pulsing load pattern |
+| `--pulse-high` | `30s` | Duration of high load phase |
+| `--pulse-low` | `30s` | Duration of low load phase |
+| `--pulse-ratio` | `0.1` | Session ratio during low phase (0.1 = 10%) |
+| `--pulse-wave` | `square` | Wave type (square/sine/sawtooth) |
 
 ### Available Strategies
 
@@ -112,6 +131,8 @@ make build
 | `slow-post` | Slow POST body transmission |
 | `slow-read` | Slow response reading |
 | `http-flood` | High-volume request flooding |
+| `h2-flood` | HTTP/2 multiplexing flood |
+| `heavy-payload` | Application-layer stress with heavy payloads |
 
 ## Examples
 
@@ -714,16 +735,164 @@ Headers randomized each request:
   --post-size 1024
 ```
 
+### 8. HTTP/2 Flood (`--strategy h2-flood`)
+
+**Purpose:** HTTP/2 multiplexing abuse attack
+
+**How it works:**
+- Opens single TCP connection with HTTP/2 negotiation
+- Spawns thousands of concurrent streams on one connection
+- Bypasses per-IP connection limits
+- Maximizes server frame processing overhead
+
+**Technical details:**
+```
+Single TCP connection with HTTP/2:
+  Stream 1: GET /?r=xxx
+  Stream 3: GET /?r=yyy
+  Stream 5: GET /?r=zzz
+  ... (100+ concurrent streams)
+
+Bypasses:
+- Per-IP connection limits
+- Connection rate limiting
+- Traditional firewall rules
+```
+
+**Use case:**
+- Testing HTTP/2 stream limits
+- Bypassing connection-based rate limiting
+- CVE-2023-44487 (Rapid Reset) style testing
+- Modern infrastructure stress testing
+
+**Example:**
+```bash
+./loadtest \
+  --target https://example.com \
+  --sessions 100 \
+  --rate 50 \
+  --strategy h2-flood \
+  --max-streams 100 \
+  --burst-size 10
+```
+
+### 9. Heavy Payload (`--strategy heavy-payload`)
+
+**Purpose:** Application-layer stress testing with CPU-intensive payloads
+
+**How it works:**
+- Sends payloads designed to maximize server-side processing cost
+- Deep nested JSON/XML stress parsers
+- ReDoS patterns trigger catastrophic regex backtracking
+- Complex query strings stress URL parsing
+
+**Payload Types:**
+
+| Type | Description |
+|------|-------------|
+| `deep-json` | Deeply nested JSON (50+ levels) |
+| `nested-xml` | Deeply nested XML with attributes |
+| `redos` | Regular expression denial of service patterns |
+| `query-flood` | Thousands of query parameters |
+| `multipart` | Large multipart form data |
+
+**Technical details:**
+```json
+// deep-json example (depth=50)
+{"level0":{"level1":{"level2":{...{"data":"..."}...}}}}
+
+// redos example (triggers backtracking)
+input=aaaaaaaaaaaaaaaaaa!
+email=aaaaaa@aaaaaa!
+
+// query-flood example
+?param0=aaaa...&param1=aaaa...&...&param9999=aaaa...
+```
+
+**Use case:**
+- Testing JSON/XML parser limits
+- Finding ReDoS vulnerabilities
+- Stress testing validation logic
+- Bypassing simple WAF rules
+
+**Example:**
+```bash
+# Deep JSON attack
+./loadtest \
+  --target http://api.example.com/parse \
+  --sessions 100 \
+  --rate 50 \
+  --strategy heavy-payload \
+  --payload-type deep-json \
+  --payload-depth 100
+
+# ReDoS attack
+./loadtest \
+  --target http://api.example.com/validate \
+  --sessions 50 \
+  --rate 20 \
+  --strategy heavy-payload \
+  --payload-type redos \
+  --payload-size 50000
+```
+
+### Pulsing Load Patterns
+
+**Purpose:** Stress test auto-scaling systems
+
+**How it works:**
+- Oscillates load between high and low levels
+- Tests scaling response time and hysteresis
+- Exposes scaling lag and thrashing issues
+
+**Wave Types:**
+
+| Type | Description |
+|------|-------------|
+| `square` | Instant transition between high/low |
+| `sine` | Smooth sinusoidal oscillation |
+| `sawtooth` | Gradual rise, sudden drop |
+
+**Use case:**
+- Testing auto-scaling policies
+- Finding scale-up/scale-down lag
+- Cloud cost optimization testing
+- Chaos engineering
+
+**Example:**
+```bash
+# Square wave: 30s at 1000 sessions, 30s at 100 sessions
+./loadtest \
+  --target http://example.com \
+  --sessions 1000 \
+  --rate 100 \
+  --pulse \
+  --pulse-wave square \
+  --pulse-high 30s \
+  --pulse-low 30s \
+  --pulse-ratio 0.1 \
+  --duration 10m
+
+# Sine wave for smooth oscillation
+./loadtest \
+  --target http://example.com \
+  --sessions 500 \
+  --pulse \
+  --pulse-wave sine \
+  --pulse-high 1m \
+  --pulse-low 1m
+```
+
 ### Strategy Comparison
 
-| Feature | Normal | Keep-Alive | Slowloris | Slow POST | Slow Read | HTTP Flood |
-|---------|--------|------------|-----------|-----------|-----------|------------|
-| **Request Complete** | Yes | Yes | No | Yes | Yes | Yes |
-| **Server Response** | Yes | Yes | No | No | Yes | Yes |
-| **Connection Reuse** | No | Yes | Yes | Yes | Yes | Yes |
-| **Resource Exhaustion** | CPU | Connections | Connections | Connections | Memory | CPU/Bandwidth |
-| **Detection Risk** | Low | Low | High | Medium | Medium | High |
-| **Best For** | Throughput | Real traffic | Connection pool | Upload endpoints | Large responses | Raw volume |
+| Feature | Normal | Keep-Alive | Slowloris | Slow POST | Slow Read | HTTP Flood | H2 Flood | Heavy Payload |
+|---------|--------|------------|-----------|-----------|-----------|------------|----------|---------------|
+| **Request Complete** | Yes | Yes | No | Yes | Yes | Yes | Yes | Yes |
+| **Server Response** | Yes | Yes | No | No | Yes | Yes | Yes | Yes |
+| **Connection Reuse** | No | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| **Resource Exhaustion** | CPU | Connections | Connections | Connections | Memory | CPU/Bandwidth | Streams/CPU | CPU/Parser |
+| **Detection Risk** | Low | Low | High | Medium | Medium | High | Medium | Low |
+| **Best For** | Throughput | Real traffic | Connection pool | Upload endpoints | Large responses | Raw volume | Modern infra | App logic |
 
 ### When to Use Each Strategy
 
