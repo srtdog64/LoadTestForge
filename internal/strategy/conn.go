@@ -1,0 +1,153 @@
+package strategy
+
+import (
+	"context"
+	"crypto/tls"
+	"fmt"
+	"net"
+	"net/url"
+	"sync/atomic"
+	"time"
+)
+
+// ConnConfig holds connection configuration options.
+type ConnConfig struct {
+	Timeout        time.Duration
+	MaxSessionLife time.Duration
+	LocalAddr      *net.TCPAddr
+	WindowSize     int // TCP receive buffer size (0 = default)
+}
+
+// DefaultConnConfig returns sensible defaults.
+func DefaultConnConfig(bindIP string) ConnConfig {
+	return ConnConfig{
+		Timeout:        10 * time.Second,
+		MaxSessionLife: 5 * time.Minute,
+		LocalAddr:      newLocalTCPAddr(bindIP),
+		WindowSize:     0,
+	}
+}
+
+// ManagedConn wraps a net.Conn with automatic connection tracking.
+type ManagedConn struct {
+	net.Conn
+	counter   *int64
+	sessionCtx context.Context
+	cancel    context.CancelFunc
+}
+
+// DialManaged establishes a managed TCP connection with optional TLS.
+// It automatically increments the counter on success and decrements on Close.
+func DialManaged(
+	ctx context.Context,
+	targetURL string,
+	cfg ConnConfig,
+	counter *int64,
+) (*ManagedConn, *url.URL, error) {
+	parsedURL, host, useTLS, err := parseTargetURL(targetURL)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	sessionCtx, cancel := context.WithTimeout(ctx, cfg.MaxSessionLife)
+
+	dialer := &net.Dialer{
+		Timeout:   cfg.Timeout,
+		LocalAddr: cfg.LocalAddr,
+	}
+
+	var conn net.Conn
+
+	if useTLS {
+		tlsConfig := &tls.Config{
+			ServerName:         parsedURL.Hostname(),
+			InsecureSkipVerify: false,
+		}
+		conn, err = tls.DialWithDialer(dialer, "tcp", host, tlsConfig)
+	} else {
+		conn, err = dialer.DialContext(sessionCtx, "tcp", host)
+	}
+
+	if err != nil {
+		cancel()
+		return nil, nil, fmt.Errorf("connection failed: %w", err)
+	}
+
+	// Set TCP receive buffer if specified
+	if cfg.WindowSize > 0 {
+		if tcpConn, ok := conn.(*net.TCPConn); ok {
+			tcpConn.SetReadBuffer(cfg.WindowSize)
+		}
+	}
+
+	atomic.AddInt64(counter, 1)
+
+	mc := &ManagedConn{
+		Conn:       conn,
+		counter:    counter,
+		sessionCtx: sessionCtx,
+		cancel:     cancel,
+	}
+
+	return mc, parsedURL, nil
+}
+
+// Close closes the connection and decrements the counter.
+func (mc *ManagedConn) Close() error {
+	mc.cancel()
+	atomic.AddInt64(mc.counter, -1)
+	return mc.Conn.Close()
+}
+
+// Context returns the session context with timeout.
+func (mc *ManagedConn) Context() context.Context {
+	return mc.sessionCtx
+}
+
+// SetWriteTimeout sets write deadline relative to now.
+func (mc *ManagedConn) SetWriteTimeout(d time.Duration) {
+	mc.Conn.SetWriteDeadline(time.Now().Add(d))
+}
+
+// SetReadTimeout sets read deadline relative to now.
+func (mc *ManagedConn) SetReadTimeout(d time.Duration) {
+	mc.Conn.SetReadDeadline(time.Now().Add(d))
+}
+
+// WriteWithTimeout writes data with the specified timeout.
+func (mc *ManagedConn) WriteWithTimeout(data []byte, timeout time.Duration) (int, error) {
+	mc.SetWriteTimeout(timeout)
+	return mc.Conn.Write(data)
+}
+
+// ReadWithTimeout reads data with the specified timeout.
+func (mc *ManagedConn) ReadWithTimeout(buf []byte, timeout time.Duration) (int, error) {
+	mc.SetReadTimeout(timeout)
+	return mc.Conn.Read(buf)
+}
+
+// TrackedConn wraps net.Conn with a callback on close.
+// Thread-safe: onClose is called exactly once.
+type TrackedConn struct {
+	net.Conn
+	onClose func()
+	closed  int32
+}
+
+// NewTrackedConn creates a connection with close callback.
+func NewTrackedConn(conn net.Conn, onClose func()) *TrackedConn {
+	return &TrackedConn{
+		Conn:    conn,
+		onClose: onClose,
+	}
+}
+
+// Close closes the connection and calls the onClose callback once.
+func (c *TrackedConn) Close() error {
+	if atomic.CompareAndSwapInt32(&c.closed, 0, 1) {
+		if c.onClose != nil {
+			c.onClose()
+		}
+	}
+	return c.Conn.Close()
+}

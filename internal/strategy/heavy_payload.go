@@ -82,12 +82,9 @@ func NewHeavyPayload(timeout time.Duration, payloadType string, depth int, size 
 
 		atomic.AddInt64(&h.activeConnections, 1)
 
-		return &heavyTrackedConn{
-			Conn: conn,
-			onClose: func() {
-				atomic.AddInt64(&h.activeConnections, -1)
-			},
-		}, nil
+		return NewTrackedConn(conn, func() {
+			atomic.AddInt64(&h.activeConnections, -1)
+		}), nil
 	}
 
 	h.client = &http.Client{
@@ -339,19 +336,4 @@ func (h *HeavyPayload) ActiveConnections() int64 {
 
 func (h *HeavyPayload) RequestsSent() int64 {
 	return atomic.LoadInt64(&h.requestsSent)
-}
-
-type heavyTrackedConn struct {
-	net.Conn
-	onClose func()
-	closed  int32
-}
-
-func (c *heavyTrackedConn) Close() error {
-	if atomic.CompareAndSwapInt32(&c.closed, 0, 1) {
-		if c.onClose != nil {
-			c.onClose()
-		}
-	}
-	return c.Conn.Close()
 }

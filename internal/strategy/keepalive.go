@@ -3,11 +3,9 @@ package strategy
 import (
 	"bufio"
 	"context"
-	"crypto/tls"
 	"fmt"
 	"io"
 	"math/rand"
-	"net"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -15,21 +13,19 @@ import (
 
 type KeepAliveHTTP struct {
 	pingInterval      time.Duration
-	connectionTimeout time.Duration
-	maxSessionLife    time.Duration
+	connConfig        ConnConfig
+	headerRandomizer  *HeaderRandomizer
 	userAgents        []string
 	metricsCallback   MetricsCallback
 	activeConnections int64
-	localAddr         *net.TCPAddr
 }
 
 func NewKeepAliveHTTP(pingInterval time.Duration, bindIP string) *KeepAliveHTTP {
 	return &KeepAliveHTTP{
-		pingInterval:      pingInterval,
-		connectionTimeout: 10 * time.Second,
-		maxSessionLife:    5 * time.Minute,
-		userAgents:        defaultUserAgents,
-		localAddr:         newLocalTCPAddr(bindIP),
+		pingInterval:     pingInterval,
+		connConfig:       DefaultConnConfig(bindIP),
+		headerRandomizer: DefaultHeaderRandomizer(),
+		userAgents:       defaultUserAgents,
 	}
 }
 
@@ -42,50 +38,25 @@ func (k *KeepAliveHTTP) ActiveConnections() int64 {
 }
 
 func (k *KeepAliveHTTP) Execute(ctx context.Context, target Target) error {
-	parsedURL, host, useTLS, err := parseTargetURL(target.URL)
-	if err != nil {
-		return err
-	}
-
-	sessionCtx, cancel := context.WithTimeout(ctx, k.maxSessionLife)
-	defer cancel()
-
-	connID := generateConnID()
-	
-	var conn net.Conn
-	dialer := &net.Dialer{
-		Timeout:   k.connectionTimeout,
-		LocalAddr: k.localAddr,
-	}
-
-	if useTLS {
-		tlsConfig := &tls.Config{
-			ServerName:         parsedURL.Hostname(),
-			InsecureSkipVerify: false,
-		}
-		conn, err = tls.DialWithDialer(dialer, "tcp", host, tlsConfig)
-	} else {
-		conn, err = dialer.DialContext(sessionCtx, "tcp", host)
-	}
-
+	mc, parsedURL, err := DialManaged(ctx, target.URL, k.connConfig, &k.activeConnections)
 	if err != nil {
 		if k.metricsCallback != nil {
 			k.metricsCallback.RecordSocketTimeout()
 		}
-		return fmt.Errorf("connection failed: %w", err)
+		return err
 	}
+
+	connID := generateConnID()
+
 	defer func() {
-		atomic.AddInt64(&k.activeConnections, -1)
-		conn.Close()
+		mc.Close()
 		if k.metricsCallback != nil {
 			k.metricsCallback.RecordConnectionEnd(connID)
 		}
 	}()
 
-	atomic.AddInt64(&k.activeConnections, 1)
-
 	if k.metricsCallback != nil {
-		k.metricsCallback.RecordConnectionStart(connID, conn.RemoteAddr().String())
+		k.metricsCallback.RecordConnectionStart(connID, mc.RemoteAddr().String())
 	}
 
 	userAgent := k.userAgents[rand.Intn(len(k.userAgents))]
@@ -97,30 +68,21 @@ func (k *KeepAliveHTTP) Execute(ctx context.Context, target Target) error {
 		path += "?" + parsedURL.RawQuery
 	}
 
-	request := fmt.Sprintf(
-		"GET %s HTTP/1.1\r\n"+
-			"Host: %s\r\n"+
-			"User-Agent: %s\r\n"+
-			"Accept: */*\r\n"+
-			"Connection: keep-alive\r\n"+
-			"\r\n",
-		path, parsedURL.Host, userAgent,
-	)
+	request := k.headerRandomizer.BuildGETRequest(parsedURL, userAgent)
 
-	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-	if _, err := conn.Write([]byte(request)); err != nil {
+	if _, err := mc.WriteWithTimeout([]byte(request), 5*time.Second); err != nil {
 		if k.metricsCallback != nil {
 			k.metricsCallback.RecordSocketTimeout()
 		}
-		return fmt.Errorf("failed to send initial request: %w", err)
+		return err
 	}
 
 	if k.metricsCallback != nil {
 		k.metricsCallback.RecordConnectionActivity(connID)
 	}
 
-	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-	reader := bufio.NewReader(conn)
+	mc.SetReadTimeout(10 * time.Second)
+	reader := bufio.NewReader(mc.Conn)
 
 	statusLine, err := reader.ReadString('\n')
 	if err != nil {
@@ -165,23 +127,14 @@ func (k *KeepAliveHTTP) Execute(ctx context.Context, target Target) error {
 
 	for {
 		select {
-		case <-sessionCtx.Done():
+		case <-mc.Context().Done():
 			return nil
 		case <-ticker.C:
 			pingCount++
-			
-			pingRequest := fmt.Sprintf(
-				"GET %s HTTP/1.1\r\n"+
-					"Host: %s\r\n"+
-					"User-Agent: %s\r\n"+
-					"Connection: keep-alive\r\n"+
-					"X-Keep-Alive-Ping: %d\r\n"+
-					"\r\n",
-				path, parsedURL.Host, userAgent, pingCount,
-			)
 
-			conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-			if _, err := conn.Write([]byte(pingRequest)); err != nil {
+			pingRequest := k.headerRandomizer.BuildGETRequest(parsedURL, userAgent)
+
+			if _, err := mc.WriteWithTimeout([]byte(pingRequest), 5*time.Second); err != nil {
 				if k.metricsCallback != nil {
 					k.metricsCallback.RecordSocketTimeout()
 					k.metricsCallback.RecordSocketReconnect()
@@ -197,7 +150,7 @@ func (k *KeepAliveHTTP) Execute(ctx context.Context, target Target) error {
 				k.metricsCallback.RecordConnectionActivity(connID)
 			}
 
-			conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+			mc.SetReadTimeout(5 * time.Second)
 			statusLine, err := reader.ReadString('\n')
 			if err != nil {
 				if k.metricsCallback != nil {

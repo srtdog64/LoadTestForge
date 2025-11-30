@@ -7,7 +7,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -47,12 +46,9 @@ func NewNormalHTTP(timeout time.Duration, bindIP string) *NormalHTTP {
 
 		atomic.AddInt64(&n.activeConnections, 1)
 
-		return &trackedConn{
-			Conn: conn,
-			onClose: func() {
-				atomic.AddInt64(&n.activeConnections, -1)
-			},
-		}, nil
+		return NewTrackedConn(conn, func() {
+			atomic.AddInt64(&n.activeConnections, -1)
+		}), nil
 	}
 
 	n.client = &http.Client{
@@ -104,17 +100,3 @@ func (n *NormalHTTP) Name() string {
 	return "normal-http"
 }
 
-type trackedConn struct {
-	net.Conn
-	onClose func()
-	once    sync.Once
-}
-
-func (c *trackedConn) Close() error {
-	c.once.Do(func() {
-		if c.onClose != nil {
-			c.onClose()
-		}
-	})
-	return c.Conn.Close()
-}

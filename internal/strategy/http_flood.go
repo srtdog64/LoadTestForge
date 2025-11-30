@@ -74,12 +74,9 @@ func NewHTTPFlood(timeout time.Duration, method string, postDataSize int, reques
 
 		atomic.AddInt64(&h.activeConnections, 1)
 
-		return &floodTrackedConn{
-			Conn: conn,
-			onClose: func() {
-				atomic.AddInt64(&h.activeConnections, -1)
-			},
-		}, nil
+		return NewTrackedConn(conn, func() {
+			atomic.AddInt64(&h.activeConnections, -1)
+		}), nil
 	}
 
 	h.client = &http.Client{
@@ -180,19 +177,4 @@ func (h *HTTPFlood) ActiveConnections() int64 {
 
 func (h *HTTPFlood) RequestsSent() int64 {
 	return atomic.LoadInt64(&h.requestsSent)
-}
-
-type floodTrackedConn struct {
-	net.Conn
-	onClose func()
-	closed  int32
-}
-
-func (c *floodTrackedConn) Close() error {
-	if atomic.CompareAndSwapInt32(&c.closed, 0, 1) {
-		if c.onClose != nil {
-			c.onClose()
-		}
-	}
-	return c.Conn.Close()
 }

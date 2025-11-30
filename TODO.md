@@ -174,8 +174,19 @@
 
 ## Future Improvements
 
-- [ ] TLS Fingerprint Randomization (JA3 Spoofing)
-- [ ] Scenario-based testing (Login -> Token -> API flow)
-- [ ] Chaos Metrics feedback loop (auto-adjust based on 5xx rate)
-- [ ] Event-driven I/O (`gnet` library for 100k+ connections)
-- [ ] Distributed mode (multiple nodes coordinated attack)
+See [ROADMAP.md](./ROADMAP.md) for detailed feature planning.
+
+**Priority 1 (v1.1):**
+- [ ] TCP Socket Management Abstraction
+- [ ] TLS JA3 Spoofing
+- [ ] Header Randomization
+
+**Priority 2 (v1.2):**
+- [ ] Scenario-Based Testing
+- [ ] Multi-Strategy Execution
+- [ ] HTTP/2 Slowloris
+
+**Priority 3 (v2.0):**
+- [ ] Distributed Mode
+- [ ] WebSocket Flood
+- [ ] gRPC Flood
