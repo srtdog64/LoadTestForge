@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"loadtestforge/internal/netutil"
+	"github.com/jdw/loadtestforge/internal/netutil"
 )
 
 type NormalHTTP struct {

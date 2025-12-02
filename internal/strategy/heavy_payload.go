@@ -11,8 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"loadtestforge/internal/httpdata"
-	"loadtestforge/internal/netutil"
+	"github.com/jdw/loadtestforge/internal/httpdata"
+	"github.com/jdw/loadtestforge/internal/netutil"
 )
 
 // HeavyPayload implements application-layer stress testing.
