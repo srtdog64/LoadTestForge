@@ -179,7 +179,9 @@ See [ROADMAP.md](./ROADMAP.md) for detailed feature planning.
 **Priority 1 (v1.1):**
 - [ ] TCP Socket Management Abstraction
 - [ ] TLS JA3 Spoofing
-- [ ] Header Randomization
+- [x] Header Randomization (Stealth Mode: Sec-Fetch-*, Sec-CH-UA)
+- [x] Cache Bypass (Randomize Mode: Realistic Query Strings)
+- [x] Latency Analysis (p50, p95, p99 Response Time Percentiles)
 
 **Priority 2 (v1.2):**
 - [ ] Scenario-Based Testing

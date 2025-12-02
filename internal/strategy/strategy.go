@@ -3,6 +3,7 @@ package strategy
 import (
 	"context"
 	"net"
+	"time"
 )
 
 type Target struct {
@@ -23,6 +24,7 @@ type MetricsCallback interface {
 	RecordConnectionEnd(connID string)
 	RecordSocketTimeout()
 	RecordSocketReconnect()
+	RecordSuccessWithLatency(duration time.Duration)
 }
 
 type MetricsAware interface {

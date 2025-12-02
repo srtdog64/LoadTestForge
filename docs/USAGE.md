@@ -33,6 +33,14 @@
 | `--timeout` | `10s` | Request timeout |
 | `--keepalive` | `10s` | Slowloris keep-alive interval |
 
+### Advanced Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--stealth` | `false` | Enable browser fingerprint headers (Sec-Fetch-*) for WAF bypass |
+| `--randomize` | `false` | Enable realistic query strings for cache bypass |
+| `--analyze-latency` | `false` | Enable response time percentile analysis (p50, p95, p99) |
+
 ## Examples
 
 ### 1. Simple HTTP Load Test
@@ -275,6 +283,83 @@ ulimit -n 65536
 - Check for memory leaks (should be stable over time)
 
 ## Advanced Usage
+
+### Stealth Mode (WAF Bypass)
+
+Enable browser fingerprint headers to bypass Web Application Firewalls:
+
+```bash
+./loadtest \
+  --target http://example.com \
+  --strategy http-flood \
+  --sessions 500 \
+  --rate 50 \
+  --stealth
+```
+
+Stealth mode adds:
+- `Sec-Fetch-Dest`, `Sec-Fetch-Mode`, `Sec-Fetch-Site`, `Sec-Fetch-User` headers
+- `Sec-CH-UA` client hints (Chrome/Edge browser fingerprint)
+- Randomized `X-Forwarded-For` headers (50% probability)
+- Randomized `X-Real-IP` headers (30% probability)
+
+### Cache Bypass (Randomize Mode)
+
+Enable realistic query strings to bypass CDN/cache servers:
+
+```bash
+./loadtest \
+  --target http://example.com \
+  --strategy http-flood \
+  --sessions 500 \
+  --rate 50 \
+  --randomize
+```
+
+Randomize mode adds realistic query parameters:
+- Timestamp (`_=1234567890123`)
+- Random number (`r=0.12345678`)
+- Referrer source (`ref=google|naver|facebook|...`)
+- Version (`v=1-100`)
+- User ID (20% probability, `uid=10000-99999`)
+- Session ID (15% probability)
+- Device type (25% probability)
+- UTM source (10% probability)
+
+### Latency Analysis
+
+Enable response time percentile analysis for QoS testing:
+
+```bash
+./loadtest \
+  --target http://example.com \
+  --strategy http-flood \
+  --sessions 200 \
+  --rate 20 \
+  --analyze-latency
+```
+
+Latency analysis provides:
+- Sample count
+- Average response time (ms)
+- Min/Max response time (ms)
+- p50, p95, p99 percentiles (ms)
+
+### Combined Advanced Options
+
+For comprehensive testing with all advanced features:
+
+```bash
+./loadtest \
+  --target http://example.com \
+  --strategy http-flood \
+  --sessions 500 \
+  --rate 50 \
+  --duration 5m \
+  --stealth \
+  --randomize \
+  --analyze-latency
+```
 
 ### Custom Headers
 

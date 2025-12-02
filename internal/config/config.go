@@ -35,6 +35,10 @@ type StrategyConfig struct {
 	PayloadType  string
 	PayloadDepth int
 	PayloadSize  int
+	// Advanced options
+	EnableStealth  bool // Browser fingerprint headers (Sec-Fetch-*)
+	RandomizePath  bool // Realistic query strings for cache bypass
+	AnalyzeLatency bool // Response time percentile analysis (p50, p95, p99)
 }
 
 type PulseConfig struct {

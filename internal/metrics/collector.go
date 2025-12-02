@@ -26,25 +26,34 @@ type Collector struct {
 	connectionLifetimes []time.Duration
 	activeConnections   map[string]*ConnectionInfo
 
+	analyzeLatency bool
+	latencies      []int64
+	latencyMu      sync.Mutex
+
 	stopChan chan struct{}
 }
 
 type ConnectionInfo struct {
-	StartTime      time.Time
+	StartTime        time.Time
 	LastActivityTime time.Time
-	ReconnectCount int
-	RemoteAddr     string
+	ReconnectCount   int
+	RemoteAddr       string
 }
 
 func NewCollector() *Collector {
 	c := &Collector{
-		requestsPerSecond: make([]int, 0, 3600),
+		requestsPerSecond:   make([]int, 0, 3600),
 		connectionLifetimes: make([]time.Duration, 0, 10000),
-		activeConnections: make(map[string]*ConnectionInfo),
-		stopChan:          make(chan struct{}),
+		activeConnections:   make(map[string]*ConnectionInfo),
+		latencies:           make([]int64, 0, 10000),
+		stopChan:            make(chan struct{}),
 	}
 	go c.recordLoop()
 	return c
+}
+
+func (c *Collector) SetAnalyzeLatency(enabled bool) {
+	c.analyzeLatency = enabled
 }
 
 func (c *Collector) RecordSuccess() {
@@ -54,6 +63,28 @@ func (c *Collector) RecordSuccess() {
 	c.mu.Lock()
 	c.currentCount++
 	c.mu.Unlock()
+}
+
+func (c *Collector) RecordSuccessWithLatency(duration time.Duration) {
+	atomic.AddInt64(&c.totalRequests, 1)
+	atomic.AddInt64(&c.successRequests, 1)
+
+	c.mu.Lock()
+	c.currentCount++
+	c.mu.Unlock()
+
+	if c.analyzeLatency {
+		c.recordLatency(duration)
+	}
+}
+
+func (c *Collector) recordLatency(duration time.Duration) {
+	c.latencyMu.Lock()
+	defer c.latencyMu.Unlock()
+
+	if len(c.latencies) < 100000 {
+		c.latencies = append(c.latencies, duration.Microseconds())
+	}
 }
 
 func (c *Collector) RecordFailure() {
@@ -153,6 +184,15 @@ type Stats struct {
 	P95              int
 	P99              int
 	SuccessRate      float64
+	// Latency percentiles (microseconds)
+	LatencyEnabled bool
+	LatencyP50     int64
+	LatencyP95     int64
+	LatencyP99     int64
+	LatencyMin     int64
+	LatencyMax     int64
+	LatencyAvg     float64
+	LatencyCount   int
 }
 
 func (c *Collector) GetStats() Stats {
@@ -176,6 +216,7 @@ func (c *Collector) GetStats() Stats {
 		SocketTimeouts:   timeouts,
 		SocketReconnects: reconnects,
 		ActiveConnCount:  len(c.activeConnections),
+		LatencyEnabled:   c.analyzeLatency,
 	}
 
 	if total > 0 {
@@ -193,7 +234,56 @@ func (c *Collector) GetStats() Stats {
 		stats.AvgConnLifetime, stats.MinConnLifetime, stats.MaxConnLifetime = c.calculateConnectionLifetimes()
 	}
 
+	if c.analyzeLatency {
+		stats.LatencyP50, stats.LatencyP95, stats.LatencyP99, stats.LatencyMin, stats.LatencyMax, stats.LatencyAvg, stats.LatencyCount = c.calculateLatencyPercentiles()
+	}
+
 	return stats
+}
+
+func (c *Collector) calculateLatencyPercentiles() (p50, p95, p99, min, max int64, avg float64, count int) {
+	c.latencyMu.Lock()
+	defer c.latencyMu.Unlock()
+
+	count = len(c.latencies)
+	if count == 0 {
+		return 0, 0, 0, 0, 0, 0, 0
+	}
+
+	sorted := make([]int64, count)
+	copy(sorted, c.latencies)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+
+	min = sorted[0]
+	max = sorted[count-1]
+
+	var sum int64
+	for _, v := range sorted {
+		sum += v
+	}
+	avg = float64(sum) / float64(count)
+
+	p50 = percentileInt64(sorted, 50)
+	p95 = percentileInt64(sorted, 95)
+	p99 = percentileInt64(sorted, 99)
+
+	return
+}
+
+func percentileInt64(sorted []int64, p int) int64 {
+	if len(sorted) == 0 {
+		return 0
+	}
+
+	index := int(math.Ceil(float64(len(sorted)) * float64(p) / 100.0))
+	if index >= len(sorted) {
+		index = len(sorted) - 1
+	}
+	if index < 0 {
+		index = 0
+	}
+
+	return sorted[index]
 }
 
 func (c *Collector) calculateAverage() float64 {
