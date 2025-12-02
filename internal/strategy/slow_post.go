@@ -5,17 +5,19 @@ import (
 	"math/rand"
 	"sync/atomic"
 	"time"
+
+	"loadtestforge/internal/httpdata"
+	"loadtestforge/internal/netutil"
 )
 
 // SlowPost implements the Slow POST (RUDY) attack.
 // It sends POST request with large Content-Length but transmits body very slowly,
 // one byte at a time, to occupy server connections.
 type SlowPost struct {
-	sendInterval     time.Duration
-	contentLength    int
-	connConfig       ConnConfig
-	headerRandomizer *HeaderRandomizer
-	userAgents       []string
+	sendInterval      time.Duration
+	contentLength     int
+	connConfig        netutil.ConnConfig
+	headerRandomizer  *httpdata.HeaderRandomizer
 	activeConnections int64
 }
 
@@ -23,20 +25,19 @@ func NewSlowPost(sendInterval time.Duration, contentLength int, bindIP string) *
 	return &SlowPost{
 		sendInterval:     sendInterval,
 		contentLength:    contentLength,
-		connConfig:       DefaultConnConfig(bindIP),
-		headerRandomizer: DefaultHeaderRandomizer(),
-		userAgents:       defaultUserAgents,
+		connConfig:       netutil.DefaultConnConfig(bindIP),
+		headerRandomizer: httpdata.DefaultHeaderRandomizer(),
 	}
 }
 
 func (s *SlowPost) Execute(ctx context.Context, target Target) error {
-	mc, parsedURL, err := DialManaged(ctx, target.URL, s.connConfig, &s.activeConnections)
+	mc, parsedURL, err := netutil.DialManaged(ctx, target.URL, s.connConfig, &s.activeConnections)
 	if err != nil {
 		return err
 	}
 	defer mc.Close()
 
-	userAgent := s.userAgents[rand.Intn(len(s.userAgents))]
+	userAgent := httpdata.RandomUserAgent()
 
 	// Build POST request with large Content-Length
 	postRequest := s.headerRandomizer.BuildPOSTRequest(

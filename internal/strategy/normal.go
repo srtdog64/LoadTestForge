@@ -5,51 +5,36 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"sync/atomic"
 	"time"
+
+	"loadtestforge/internal/netutil"
 )
 
 type NormalHTTP struct {
 	client            *http.Client
 	timeout           time.Duration
 	activeConnections int64
-	localAddr         *net.TCPAddr
 }
 
 func NewNormalHTTP(timeout time.Duration, bindIP string) *NormalHTTP {
 	n := &NormalHTTP{
-		timeout:   timeout,
-		localAddr: newLocalTCPAddr(bindIP),
+		timeout: timeout,
 	}
 
-	transport := &http.Transport{
-		MaxIdleConns:          0,
-		MaxIdleConnsPerHost:   0,
-		MaxConnsPerHost:       0,
-		IdleConnTimeout:       90 * time.Second,
-		DisableKeepAlives:     false,
-		ExpectContinueTimeout: 1 * time.Second,
+	dialerCfg := netutil.DialerConfig{
+		Timeout:       30 * time.Second,
+		KeepAlive:     30 * time.Second,
+		LocalAddr:     netutil.NewLocalTCPAddr(bindIP),
+		TLSSkipVerify: false,
 	}
 
-	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		dialer := &net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
-			LocalAddr: n.localAddr,
-		}
-		conn, err := dialer.DialContext(ctx, network, addr)
-		if err != nil {
-			return nil, err
-		}
-
-		atomic.AddInt64(&n.activeConnections, 1)
-
-		return NewTrackedConn(conn, func() {
-			atomic.AddInt64(&n.activeConnections, -1)
-		}), nil
-	}
+	transport := netutil.NewTrackedTransport(dialerCfg, &n.activeConnections)
+	transport.MaxIdleConns = 0
+	transport.MaxIdleConnsPerHost = 0
+	transport.MaxConnsPerHost = 0
+	transport.DisableKeepAlives = false
 
 	n.client = &http.Client{
 		Timeout:   timeout,
@@ -99,4 +84,3 @@ func (n *NormalHTTP) Execute(ctx context.Context, target Target) error {
 func (n *NormalHTTP) Name() string {
 	return "normal-http"
 }
-

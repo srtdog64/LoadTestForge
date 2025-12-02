@@ -12,6 +12,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"loadtestforge/internal/httpdata"
+	"loadtestforge/internal/netutil"
+
 	"golang.org/x/net/http2"
 )
 
@@ -27,7 +30,6 @@ type H2Flood struct {
 	activeStreams        int64
 	requestsSent         int64
 	localAddr            *net.TCPAddr
-	userAgents           []string
 }
 
 func NewH2Flood(maxStreams int, burstSize int, bindIP string) *H2Flood {
@@ -43,13 +45,12 @@ func NewH2Flood(maxStreams int, burstSize int, bindIP string) *H2Flood {
 		streamBurstSize:      burstSize,
 		connectionTimeout:    10 * time.Second,
 		maxSessionLife:       5 * time.Minute,
-		userAgents:           defaultUserAgents,
-		localAddr:            newLocalTCPAddr(bindIP),
+		localAddr:            netutil.NewLocalTCPAddr(bindIP),
 	}
 }
 
 func (h *H2Flood) Execute(ctx context.Context, target Target) error {
-	parsedURL, host, useTLS, err := parseTargetURL(target.URL)
+	parsedURL, host, useTLS, err := netutil.ParseTargetURL(target.URL)
 	if err != nil {
 		return err
 	}
@@ -161,11 +162,11 @@ func (h *H2Flood) sendStream(ctx context.Context, cc *http2.ClientConn, targetUR
 		return
 	}
 
-	req.Header.Set("User-Agent", h.userAgents[rand.Intn(len(h.userAgents))])
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.5")
-	req.Header.Set("Accept-Encoding", "gzip, deflate, br")
-	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("User-Agent", httpdata.RandomUserAgent())
+	req.Header.Set("Accept", httpdata.RandomAccept())
+	req.Header.Set("Accept-Language", httpdata.RandomAcceptLanguage())
+	req.Header.Set("Accept-Encoding", httpdata.RandomAcceptEncoding())
+	req.Header.Set("Cache-Control", httpdata.RandomCacheControl())
 
 	resp, err := cc.RoundTrip(req)
 	if err != nil {

@@ -3,15 +3,18 @@ package strategy
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"math/rand"
-	"net"
 	"net/http"
 	"net/url"
 	"sync/atomic"
 	"time"
+
+	"loadtestforge/internal/httpdata"
+	"loadtestforge/internal/netutil"
 )
 
 // HTTPFlood implements high-volume HTTP request flooding.
@@ -24,33 +27,10 @@ type HTTPFlood struct {
 	requestsPerConn   int
 	activeConnections int64
 	requestsSent      int64
-	localAddr         *net.TCPAddr
-	userAgents        []string
-	referers          []string
+	cookiePool        []string
 	enableStealth     bool
 	randomizePath     bool
 	metricsCallback   MetricsCallback
-}
-
-var defaultReferers = []string{
-	"https://www.google.com/",
-	"https://www.bing.com/",
-	"https://www.facebook.com/",
-	"https://twitter.com/",
-	"https://www.youtube.com/",
-	"https://www.reddit.com/",
-	"https://www.linkedin.com/",
-}
-
-var realisticReferers = []string{
-	"google",
-	"naver",
-	"daum",
-	"facebook",
-	"direct",
-	"bing",
-	"yahoo",
-	"twitter",
 }
 
 func NewHTTPFlood(timeout time.Duration, method string, postDataSize int, requestsPerConn int, bindIP string, enableStealth bool, randomizePath bool) *HTTPFlood {
@@ -59,42 +39,19 @@ func NewHTTPFlood(timeout time.Duration, method string, postDataSize int, reques
 		method:          method,
 		postDataSize:    postDataSize,
 		requestsPerConn: requestsPerConn,
-		localAddr:       newLocalTCPAddr(bindIP),
-		userAgents:      defaultUserAgents,
-		referers:        defaultReferers,
+		cookiePool:      generateCookiePool(50),
 		enableStealth:   enableStealth,
 		randomizePath:   randomizePath,
 	}
 
-	transport := &http.Transport{
-		MaxIdleConns:          100,
-		MaxIdleConnsPerHost:   100,
-		MaxConnsPerHost:       0,
-		IdleConnTimeout:       90 * time.Second,
-		DisableKeepAlives:     false,
-		ExpectContinueTimeout: 1 * time.Second,
-		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: true,
-		},
+	dialerCfg := netutil.DialerConfig{
+		Timeout:       30 * time.Second,
+		KeepAlive:     30 * time.Second,
+		LocalAddr:     netutil.NewLocalTCPAddr(bindIP),
+		TLSSkipVerify: true,
 	}
 
-	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		dialer := &net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
-			LocalAddr: h.localAddr,
-		}
-		conn, err := dialer.DialContext(ctx, network, addr)
-		if err != nil {
-			return nil, err
-		}
-
-		atomic.AddInt64(&h.activeConnections, 1)
-
-		return NewTrackedConn(conn, func() {
-			atomic.AddInt64(&h.activeConnections, -1)
-		}), nil
-	}
+	transport := netutil.NewTrackedTransport(dialerCfg, &h.activeConnections)
 
 	h.client = &http.Client{
 		Timeout:   timeout,
@@ -102,6 +59,16 @@ func NewHTTPFlood(timeout time.Duration, method string, postDataSize int, reques
 	}
 
 	return h
+}
+
+// generateCookiePool creates a pool of realistic session cookies
+func generateCookiePool(size int) []string {
+	pool := make([]string, size)
+	for i := 0; i < size; i++ {
+		hash := md5.Sum([]byte(fmt.Sprintf("%d%d", time.Now().UnixNano(), i)))
+		pool[i] = fmt.Sprintf("session_%d=%s", i, hex.EncodeToString(hash[:])[:16])
+	}
+	return pool
 }
 
 func (h *HTTPFlood) Execute(ctx context.Context, target Target) error {
@@ -141,14 +108,7 @@ func (h *HTTPFlood) sendRequest(ctx context.Context, target Target) error {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("User-Agent", h.userAgents[rand.Intn(len(h.userAgents))])
-	req.Header.Set("Referer", h.referers[rand.Intn(len(h.referers))])
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.5")
-	req.Header.Set("Accept-Encoding", "gzip, deflate, br")
-	req.Header.Set("Cache-Control", h.randomCacheControl())
-	req.Header.Set("Pragma", "no-cache")
-	req.Header.Set("Connection", "keep-alive")
+	h.applyRandomHeaders(req)
 
 	if h.enableStealth {
 		h.applyStealthHeaders(req)
@@ -182,55 +142,63 @@ func (h *HTTPFlood) sendRequest(ctx context.Context, target Target) error {
 	return nil
 }
 
+// applyRandomHeaders applies randomized headers to mimic real browser traffic
+func (h *HTTPFlood) applyRandomHeaders(req *http.Request) {
+	req.Header.Set("User-Agent", httpdata.RandomUserAgent())
+	req.Header.Set("Referer", httpdata.RandomReferer())
+	req.Header.Set("Accept", httpdata.RandomAccept())
+	req.Header.Set("Accept-Language", httpdata.RandomAcceptLanguage())
+	req.Header.Set("Accept-Encoding", "gzip, deflate, br")
+	req.Header.Set("Cache-Control", httpdata.RandomCacheControl())
+	req.Header.Set("Connection", "keep-alive")
+
+	// 40% probability: Add X-Forwarded-For header
+	if rand.Float32() < 0.4 {
+		req.Header.Set("X-Forwarded-For", httpdata.RandomFakeIP())
+	}
+
+	// 30% probability: Add random session cookie
+	if rand.Float32() < 0.3 {
+		req.Header.Set("Cookie", h.cookiePool[rand.Intn(len(h.cookiePool))])
+	}
+
+	// 20% probability: Add X-Requested-With (AJAX request)
+	if rand.Float32() < 0.2 {
+		req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	}
+
+	// 15% probability: Add DNT header
+	if rand.Float32() < 0.15 {
+		req.Header.Set("DNT", "1")
+	}
+}
+
 // applyStealthHeaders adds modern browser fingerprint headers to bypass WAF detection.
-// These headers (Sec-Fetch-*) are sent by Chrome/Edge browsers to identify legitimate requests.
 func (h *HTTPFlood) applyStealthHeaders(req *http.Request) {
 	req.Header.Set("Upgrade-Insecure-Requests", "1")
 	req.Header.Set("Sec-Fetch-Dest", "document")
 	req.Header.Set("Sec-Fetch-Mode", "navigate")
-	req.Header.Set("Sec-Fetch-Site", h.randomSecFetchSite())
+	req.Header.Set("Sec-Fetch-Site", httpdata.RandomSecFetchSite())
 	req.Header.Set("Sec-Fetch-User", "?1")
-	req.Header.Set("Sec-CH-UA", `"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"`)
-	req.Header.Set("Sec-CH-UA-Mobile", "?0")
-	req.Header.Set("Sec-CH-UA-Platform", h.randomPlatform())
 
+	// Client Hints (Chrome 121+)
+	chromeVer := httpdata.RandomChromeVersion()
+	req.Header.Set("Sec-CH-UA", fmt.Sprintf(`"Chromium";v="%s", "Google Chrome";v="%s", "Not-A.Brand";v="99"`, chromeVer, chromeVer))
+	req.Header.Set("Sec-CH-UA-Mobile", httpdata.RandomMobile())
+	req.Header.Set("Sec-CH-UA-Platform", fmt.Sprintf(`"%s"`, httpdata.RandomPlatform()))
+
+	// 50% probability: Add X-Forwarded-For (IP spoofing)
 	if rand.Float32() < 0.5 {
-		fakeIP := fmt.Sprintf("%d.%d.%d.%d",
-			rand.Intn(223)+1, rand.Intn(256), rand.Intn(256), rand.Intn(254)+1)
-		req.Header.Set("X-Forwarded-For", fakeIP)
+		req.Header.Set("X-Forwarded-For", httpdata.RandomFakeIP())
 	}
 
+	// 30% probability: Add X-Real-IP
 	if rand.Float32() < 0.3 {
-		req.Header.Set("X-Real-IP", fmt.Sprintf("%d.%d.%d.%d",
-			rand.Intn(223)+1, rand.Intn(256), rand.Intn(256), rand.Intn(254)+1))
+		req.Header.Set("X-Real-IP", httpdata.RandomFakeIP())
 	}
-}
-
-func (h *HTTPFlood) randomSecFetchSite() string {
-	sites := []string{"none", "same-origin", "same-site", "cross-site"}
-	weights := []int{40, 30, 20, 10}
-	total := 0
-	for _, w := range weights {
-		total += w
-	}
-	r := rand.Intn(total)
-	cumulative := 0
-	for i, w := range weights {
-		cumulative += w
-		if r < cumulative {
-			return sites[i]
-		}
-	}
-	return "none"
-}
-
-func (h *HTTPFlood) randomPlatform() string {
-	platforms := []string{`"Windows"`, `"macOS"`, `"Linux"`}
-	return platforms[rand.Intn(len(platforms))]
 }
 
 // generateRealisticURL creates a URL with realistic query parameters
-// that mimic organic user traffic patterns for cache bypass and log obfuscation.
 func (h *HTTPFlood) generateRealisticURL(baseURL string) string {
 	u, err := url.Parse(baseURL)
 	if err != nil {
@@ -240,42 +208,28 @@ func (h *HTTPFlood) generateRealisticURL(baseURL string) string {
 	q := u.Query()
 
 	q.Set("_", fmt.Sprintf("%d", time.Now().UnixMilli()))
-
-	q.Set("r", fmt.Sprintf("%.8f", rand.Float64()))
-
-	q.Set("ref", realisticReferers[rand.Intn(len(realisticReferers))])
-
+	q.Set("r", fmt.Sprintf("%d", rand.Intn(1000000)))
 	q.Set("v", fmt.Sprintf("%d", rand.Intn(100)+1))
+	q.Set("ref", httpdata.RandomRefSource())
+
+	cacheOptions := []string{"true", "false"}
+	q.Set("cache", cacheOptions[rand.Intn(len(cacheOptions))])
 
 	if rand.Float32() < 0.2 {
-		q.Set("uid", fmt.Sprintf("%d", rand.Intn(90000)+10000))
+		q.Set("user_id", fmt.Sprintf("%d", rand.Intn(9000)+1000))
+		q.Set("device", httpdata.RandomDeviceType())
 	}
 
 	if rand.Float32() < 0.15 {
-		q.Set("session", h.generateSessionID())
-	}
-
-	if rand.Float32() < 0.25 {
-		devices := []string{"desktop", "mobile", "tablet"}
-		q.Set("device", devices[rand.Intn(len(devices))])
+		q.Set("session", httpdata.GenerateSessionID())
 	}
 
 	if rand.Float32() < 0.1 {
-		utmSources := []string{"google", "facebook", "newsletter", "direct", "twitter"}
-		q.Set("utm_source", utmSources[rand.Intn(len(utmSources))])
+		q.Set("utm_source", httpdata.RandomUTMSource())
 	}
 
 	u.RawQuery = q.Encode()
 	return u.String()
-}
-
-func (h *HTTPFlood) generateSessionID() string {
-	chars := "abcdefghijklmnopqrstuvwxyz0123456789"
-	result := make([]byte, 16)
-	for i := range result {
-		result[i] = chars[rand.Intn(len(chars))]
-	}
-	return string(result)
 }
 
 func (h *HTTPFlood) generatePostData() []byte {
@@ -285,11 +239,6 @@ func (h *HTTPFlood) generatePostData() []byte {
 		data[i] = chars[rand.Intn(len(chars))]
 	}
 	return data
-}
-
-func (h *HTTPFlood) randomCacheControl() string {
-	options := []string{"no-cache", "max-age=0", "no-store", "must-revalidate"}
-	return options[rand.Intn(len(options))]
 }
 
 func (h *HTTPFlood) Name() string {

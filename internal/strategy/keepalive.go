@@ -5,17 +5,18 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math/rand"
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"loadtestforge/internal/httpdata"
+	"loadtestforge/internal/netutil"
 )
 
 type KeepAliveHTTP struct {
 	pingInterval      time.Duration
-	connConfig        ConnConfig
-	headerRandomizer  *HeaderRandomizer
-	userAgents        []string
+	connConfig        netutil.ConnConfig
+	headerRandomizer  *httpdata.HeaderRandomizer
 	metricsCallback   MetricsCallback
 	activeConnections int64
 }
@@ -23,9 +24,8 @@ type KeepAliveHTTP struct {
 func NewKeepAliveHTTP(pingInterval time.Duration, bindIP string) *KeepAliveHTTP {
 	return &KeepAliveHTTP{
 		pingInterval:     pingInterval,
-		connConfig:       DefaultConnConfig(bindIP),
-		headerRandomizer: DefaultHeaderRandomizer(),
-		userAgents:       defaultUserAgents,
+		connConfig:       netutil.DefaultConnConfig(bindIP),
+		headerRandomizer: httpdata.DefaultHeaderRandomizer(),
 	}
 }
 
@@ -38,7 +38,7 @@ func (k *KeepAliveHTTP) ActiveConnections() int64 {
 }
 
 func (k *KeepAliveHTTP) Execute(ctx context.Context, target Target) error {
-	mc, parsedURL, err := DialManaged(ctx, target.URL, k.connConfig, &k.activeConnections)
+	mc, parsedURL, err := netutil.DialManaged(ctx, target.URL, k.connConfig, &k.activeConnections)
 	if err != nil {
 		if k.metricsCallback != nil {
 			k.metricsCallback.RecordSocketTimeout()
@@ -59,7 +59,7 @@ func (k *KeepAliveHTTP) Execute(ctx context.Context, target Target) error {
 		k.metricsCallback.RecordConnectionStart(connID, mc.RemoteAddr().String())
 	}
 
-	userAgent := k.userAgents[rand.Intn(len(k.userAgents))]
+	userAgent := httpdata.RandomUserAgent()
 	path := parsedURL.Path
 	if path == "" {
 		path = "/"
@@ -188,8 +188,4 @@ func (k *KeepAliveHTTP) Execute(ctx context.Context, target Target) error {
 
 func (k *KeepAliveHTTP) Name() string {
 	return "keepalive-http"
-}
-
-func generateConnID() string {
-	return fmt.Sprintf("conn-%d-%d", time.Now().UnixNano(), rand.Int63())
 }

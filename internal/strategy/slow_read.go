@@ -2,44 +2,44 @@ package strategy
 
 import (
 	"context"
-	"math/rand"
 	"sync/atomic"
 	"time"
+
+	"loadtestforge/internal/httpdata"
+	"loadtestforge/internal/netutil"
 )
 
 // SlowRead implements the Slow Read attack.
 // It sends a complete HTTP request but reads the response very slowly,
 // forcing the server to keep the connection open and buffer the response.
 type SlowRead struct {
-	readInterval     time.Duration
-	readSize         int
-	connConfig       ConnConfig
-	headerRandomizer *HeaderRandomizer
-	userAgents       []string
+	readInterval      time.Duration
+	readSize          int
+	connConfig        netutil.ConnConfig
+	headerRandomizer  *httpdata.HeaderRandomizer
 	activeConnections int64
 }
 
 func NewSlowRead(readInterval time.Duration, readSize int, windowSize int, bindIP string) *SlowRead {
-	cfg := DefaultConnConfig(bindIP)
+	cfg := netutil.DefaultConnConfig(bindIP)
 	cfg.WindowSize = windowSize
 
 	return &SlowRead{
 		readInterval:     readInterval,
 		readSize:         readSize,
 		connConfig:       cfg,
-		headerRandomizer: DefaultHeaderRandomizer(),
-		userAgents:       defaultUserAgents,
+		headerRandomizer: httpdata.DefaultHeaderRandomizer(),
 	}
 }
 
 func (s *SlowRead) Execute(ctx context.Context, target Target) error {
-	mc, parsedURL, err := DialManaged(ctx, target.URL, s.connConfig, &s.activeConnections)
+	mc, parsedURL, err := netutil.DialManaged(ctx, target.URL, s.connConfig, &s.activeConnections)
 	if err != nil {
 		return err
 	}
 	defer mc.Close()
 
-	userAgent := s.userAgents[rand.Intn(len(s.userAgents))]
+	userAgent := httpdata.RandomUserAgent()
 
 	// Build GET request (Accept-Encoding: identity to prevent compression)
 	request := s.headerRandomizer.BuildGETRequest(parsedURL, userAgent)

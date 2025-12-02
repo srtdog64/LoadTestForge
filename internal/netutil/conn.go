@@ -1,4 +1,4 @@
-package strategy
+package netutil
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -23,7 +24,7 @@ func DefaultConnConfig(bindIP string) ConnConfig {
 	return ConnConfig{
 		Timeout:        10 * time.Second,
 		MaxSessionLife: 5 * time.Minute,
-		LocalAddr:      newLocalTCPAddr(bindIP),
+		LocalAddr:      NewLocalTCPAddr(bindIP),
 		WindowSize:     0,
 	}
 }
@@ -31,9 +32,9 @@ func DefaultConnConfig(bindIP string) ConnConfig {
 // ManagedConn wraps a net.Conn with automatic connection tracking.
 type ManagedConn struct {
 	net.Conn
-	counter   *int64
+	counter    *int64
 	sessionCtx context.Context
-	cancel    context.CancelFunc
+	cancel     context.CancelFunc
 }
 
 // DialManaged establishes a managed TCP connection with optional TLS.
@@ -44,7 +45,7 @@ func DialManaged(
 	cfg ConnConfig,
 	counter *int64,
 ) (*ManagedConn, *url.URL, error) {
-	parsedURL, host, useTLS, err := parseTargetURL(targetURL)
+	parsedURL, host, useTLS, err := ParseTargetURL(targetURL)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -150,4 +151,37 @@ func (c *TrackedConn) Close() error {
 		}
 	}
 	return c.Conn.Close()
+}
+
+// ParseTargetURL parses a URL and returns parsed URL, host:port, useTLS flag.
+func ParseTargetURL(targetURL string) (*url.URL, string, bool, error) {
+	parsed, err := url.Parse(targetURL)
+	if err != nil {
+		return nil, "", false, fmt.Errorf("invalid URL: %w", err)
+	}
+
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
+		if scheme == "" {
+			return nil, "", false, fmt.Errorf("missing scheme: URL must start with http:// or https:// (got: %s)", targetURL)
+		}
+		return nil, "", false, fmt.Errorf("unsupported scheme: %s (only http/https allowed)", scheme)
+	}
+
+	host := parsed.Host
+	if host == "" {
+		return nil, "", false, fmt.Errorf("missing host in URL")
+	}
+
+	useTLS := scheme == "https"
+
+	if !strings.Contains(host, ":") {
+		if useTLS {
+			host += ":443"
+		} else {
+			host += ":80"
+		}
+	}
+
+	return parsed, host, useTLS, nil
 }

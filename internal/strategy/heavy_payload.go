@@ -3,15 +3,16 @@ package strategy
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"fmt"
 	"io"
 	"math/rand"
-	"net"
 	"net/http"
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"loadtestforge/internal/httpdata"
+	"loadtestforge/internal/netutil"
 )
 
 // HeavyPayload implements application-layer stress testing.
@@ -28,17 +29,15 @@ type HeavyPayload struct {
 	payloadSize       int
 	activeConnections int64
 	requestsSent      int64
-	localAddr         *net.TCPAddr
-	userAgents        []string
 }
 
 // Payload types
 const (
-	PayloadDeepJSON    = "deep-json"
-	PayloadReDoS       = "redos"
-	PayloadNestedXML   = "nested-xml"
-	PayloadQueryFlood  = "query-flood"
-	PayloadMultipart   = "multipart"
+	PayloadDeepJSON   = "deep-json"
+	PayloadReDoS      = "redos"
+	PayloadNestedXML  = "nested-xml"
+	PayloadQueryFlood = "query-flood"
+	PayloadMultipart  = "multipart"
 )
 
 func NewHeavyPayload(timeout time.Duration, payloadType string, depth int, size int, bindIP string) *HeavyPayload {
@@ -54,38 +53,16 @@ func NewHeavyPayload(timeout time.Duration, payloadType string, depth int, size 
 		payloadType:  payloadType,
 		payloadDepth: depth,
 		payloadSize:  size,
-		localAddr:    newLocalTCPAddr(bindIP),
-		userAgents:   defaultUserAgents,
 	}
 
-	transport := &http.Transport{
-		MaxIdleConns:          100,
-		MaxIdleConnsPerHost:   100,
-		IdleConnTimeout:       90 * time.Second,
-		DisableKeepAlives:     false,
-		ExpectContinueTimeout: 1 * time.Second,
-		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: true,
-		},
+	dialerCfg := netutil.DialerConfig{
+		Timeout:       30 * time.Second,
+		KeepAlive:     30 * time.Second,
+		LocalAddr:     netutil.NewLocalTCPAddr(bindIP),
+		TLSSkipVerify: true,
 	}
 
-	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		dialer := &net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
-			LocalAddr: h.localAddr,
-		}
-		conn, err := dialer.DialContext(ctx, network, addr)
-		if err != nil {
-			return nil, err
-		}
-
-		atomic.AddInt64(&h.activeConnections, 1)
-
-		return NewTrackedConn(conn, func() {
-			atomic.AddInt64(&h.activeConnections, -1)
-		}), nil
-	}
+	transport := netutil.NewTrackedTransport(dialerCfg, &h.activeConnections)
 
 	h.client = &http.Client{
 		Timeout:   timeout,
@@ -145,10 +122,10 @@ func (h *HeavyPayload) Execute(ctx context.Context, target Target) error {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("User-Agent", h.userAgents[rand.Intn(len(h.userAgents))])
+	req.Header.Set("User-Agent", httpdata.RandomUserAgent())
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("Accept", "*/*")
-	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Cache-Control", httpdata.RandomCacheControl())
 
 	for k, v := range target.Headers {
 		req.Header.Set(k, v)
