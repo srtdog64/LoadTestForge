@@ -141,6 +141,11 @@ func (h *HTTPFlood) sendRequest(ctx context.Context, target Target, parsedURL *u
 
 	atomic.AddInt64(&h.requestsSent, 1)
 
+	// HTTP 4xx/5xx 에러를 실패로 처리
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("http error: %d", resp.StatusCode)
+	}
+
 	if h.metricsCallback != nil {
 		h.metricsCallback.RecordSuccessWithLatency(latency)
 	}

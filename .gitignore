@@ -37,3 +37,6 @@ vendor/
 # Build artifacts
 dist/
 build/
+
+#agent
+.claude/

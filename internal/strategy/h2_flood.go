@@ -29,7 +29,9 @@ type H2Flood struct {
 	activeConnections    int64
 	activeStreams        int64
 	requestsSent         int64
+	streamFailures       int64
 	localAddr            *net.TCPAddr
+	metricsCallback      MetricsCallback
 }
 
 func NewH2Flood(maxStreams int, burstSize int, bindIP string) *H2Flood {
@@ -159,6 +161,7 @@ func (h *H2Flood) sendStream(ctx context.Context, cc *http2.ClientConn, targetUR
 
 	req, err := http.NewRequestWithContext(reqCtx, "GET", url, nil)
 	if err != nil {
+		atomic.AddInt64(&h.streamFailures, 1)
 		return
 	}
 
@@ -168,8 +171,12 @@ func (h *H2Flood) sendStream(ctx context.Context, cc *http2.ClientConn, targetUR
 	req.Header.Set("Accept-Encoding", httpdata.RandomAcceptEncoding())
 	req.Header.Set("Cache-Control", httpdata.RandomCacheControl())
 
+	startTime := time.Now()
 	resp, err := cc.RoundTrip(req)
+	latency := time.Since(startTime)
+
 	if err != nil {
+		atomic.AddInt64(&h.streamFailures, 1)
 		return
 	}
 
@@ -178,6 +185,17 @@ func (h *H2Flood) sendStream(ctx context.Context, cc *http2.ClientConn, targetUR
 	resp.Body.Close()
 
 	atomic.AddInt64(&h.requestsSent, 1)
+
+	// HTTP 4xx/5xx 에러를 실패로 처리
+	if resp.StatusCode >= 400 {
+		atomic.AddInt64(&h.streamFailures, 1)
+		return
+	}
+
+	// 메트릭 콜백이 있으면 성공 기록
+	if h.metricsCallback != nil {
+		h.metricsCallback.RecordSuccessWithLatency(latency)
+	}
 }
 
 // executeH2C handles HTTP/2 over cleartext (h2c) - rare but possible
@@ -264,4 +282,12 @@ func (h *H2Flood) ActiveStreams() int64 {
 
 func (h *H2Flood) RequestsSent() int64 {
 	return atomic.LoadInt64(&h.requestsSent)
+}
+
+func (h *H2Flood) StreamFailures() int64 {
+	return atomic.LoadInt64(&h.streamFailures)
+}
+
+func (h *H2Flood) SetMetricsCallback(callback MetricsCallback) {
+	h.metricsCallback = callback
 }

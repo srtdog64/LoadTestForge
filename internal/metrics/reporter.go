@@ -125,6 +125,49 @@ func (r *Reporter) printStats(startTime time.Time) {
 	}
 }
 
+// TestResult represents the overall pass/fail verdict
+type TestResult struct {
+	Passed   bool
+	Failures []string
+}
+
+// EvaluateTestResult determines if the test passed based on metrics
+func EvaluateTestResult(stats Stats) TestResult {
+	result := TestResult{Passed: true, Failures: make([]string, 0)}
+
+	// 성공률이 90% 미만이면 실패
+	if stats.Total > 0 && stats.SuccessRate < 90.0 {
+		result.Passed = false
+		result.Failures = append(result.Failures, fmt.Sprintf("Success rate %.2f%% below 90%% threshold", stats.SuccessRate))
+	}
+
+	// 요청률 편차가 20% 초과면 실패
+	if stats.AvgPerSec > 0 {
+		deviation := (stats.StdDev / stats.AvgPerSec) * 100
+		if deviation > 20 {
+			result.Passed = false
+			result.Failures = append(result.Failures, fmt.Sprintf("Rate deviation %.2f%% exceeds 20%% threshold", deviation))
+		}
+	}
+
+	// p99 레이턴시가 5초 초과면 실패
+	if stats.LatencyEnabled && stats.LatencyP99 > 5000000 {
+		result.Passed = false
+		result.Failures = append(result.Failures, fmt.Sprintf("p99 latency %.2f ms exceeds 5000ms threshold", float64(stats.LatencyP99)/1000.0))
+	}
+
+	// 타임아웃 비율이 10% 초과면 실패
+	if stats.Total > 0 {
+		timeoutRate := float64(stats.SocketTimeouts) / float64(stats.Total) * 100
+		if timeoutRate > 10 {
+			result.Passed = false
+			result.Failures = append(result.Failures, fmt.Sprintf("Timeout rate %.2f%% exceeds 10%% threshold", timeoutRate))
+		}
+	}
+
+	return result
+}
+
 func (r *Reporter) printFinalReport(startTime time.Time) {
 	stats := r.collector.GetStats()
 	elapsed := time.Since(startTime)
@@ -200,5 +243,19 @@ func (r *Reporter) printFinalReport(startTime time.Time) {
 	if stats.AvgPerSec > 0 {
 		deviation := (stats.StdDev / stats.AvgPerSec) * 100
 		fmt.Printf("Rate Deviation:    %.2f%%\n", deviation)
+	}
+
+	// 최종 Pass/Fail 판정
+	fmt.Println()
+	fmt.Println("=== Test Verdict ===")
+	result := EvaluateTestResult(stats)
+	if result.Passed {
+		fmt.Println("Result: PASS")
+	} else {
+		fmt.Println("Result: FAIL")
+		fmt.Println("Failure reasons:")
+		for _, reason := range result.Failures {
+			fmt.Printf("  - %s\n", reason)
+		}
 	}
 }

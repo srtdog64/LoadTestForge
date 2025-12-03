@@ -298,7 +298,10 @@ func (m *Manager) launchSession(parentCtx context.Context) {
 	}()
 
 	consecutiveFailures := 0
-	maxConsecutiveFailures := 5
+	maxConsecutiveFailures := m.perf.MaxConsecutiveFailures
+	if maxConsecutiveFailures <= 0 {
+		maxConsecutiveFailures = 5
+	}
 
 	for {
 		select {

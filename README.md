@@ -35,6 +35,7 @@ High-performance load testing tool with Slowloris attack support and advanced me
   - Success rate monitoring
   - TCP session accuracy (goroutines vs real sockets)
   - Connection lifetime, timeout, and reconnect telemetry
+  - **Automatic Pass/Fail Verdict** with configurable thresholds
 
 - **Multi-IP Source Binding**
   - Bind outbound connections to specific network interfaces
@@ -119,6 +120,10 @@ make build
 | `--pulse-low` | `30s` | Duration of low load phase |
 | `--pulse-ratio` | `0.1` | Session ratio during low phase (0.1 = 10%) |
 | `--pulse-wave` | `square` | Wave type (square/sine/sawtooth) |
+| `--max-failures` | `5` | Max consecutive failures before session terminates |
+| `--stealth` | `false` | Enable browser fingerprint headers (Sec-Fetch-*) for WAF bypass |
+| `--randomize` | `false` | Enable realistic query strings for cache bypass |
+| `--analyze-latency` | `false` | Enable response time percentile analysis (p50, p95, p99) |
 
 ### Available Strategies
 
@@ -261,6 +266,32 @@ Most target servers implement DDoS protection with per-IP connection limits:
 | Target allows 5,000/IP | 5,000 sessions | ~35,000 sessions |
 
 ## Understanding Metrics
+
+### Test Verdict (Pass/Fail)
+
+At the end of each test, LoadTestForge outputs an automatic Pass/Fail verdict based on the following criteria:
+
+| Criteria | Threshold | Result |
+|----------|-----------|--------|
+| Success Rate | < 90% | FAIL |
+| Rate Deviation | > 20% | FAIL |
+| p99 Latency | > 5000ms | FAIL |
+| Timeout Rate | > 10% | FAIL |
+
+Example output:
+```
+=== Test Verdict ===
+Result: PASS
+```
+
+Or if thresholds are exceeded:
+```
+=== Test Verdict ===
+Result: FAIL
+Failure reasons:
+  - Success rate 85.50% below 90% threshold
+  - Timeout rate 12.30% exceeds 10% threshold
+```
 
 ### Percentiles (p50, p95, p99)
 

@@ -97,6 +97,7 @@ func (k *KeepAliveHTTP) Execute(ctx context.Context, target Target) error {
 	}
 
 	contentLength := int64(0)
+	isChunked := false
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
@@ -109,12 +110,22 @@ func (k *KeepAliveHTTP) Execute(ctx context.Context, target Target) error {
 		if line == "" {
 			break
 		}
-		if strings.HasPrefix(strings.ToLower(line), "content-length:") {
+		lowerLine := strings.ToLower(line)
+		if strings.HasPrefix(lowerLine, "content-length:") {
 			fmt.Sscanf(line, "Content-Length: %d", &contentLength)
+		}
+		if strings.HasPrefix(lowerLine, "transfer-encoding:") && strings.Contains(lowerLine, "chunked") {
+			isChunked = true
 		}
 	}
 
-	if contentLength > 0 {
+	// 응답 본문 소비
+	if isChunked {
+		// Chunked encoding: 각 청크를 읽어서 버림
+		if err := drainChunkedBody(reader); err != nil {
+			return fmt.Errorf("failed to drain chunked body: %w", err)
+		}
+	} else if contentLength > 0 {
 		io.CopyN(io.Discard, reader, contentLength)
 	}
 
@@ -188,4 +199,41 @@ func (k *KeepAliveHTTP) Execute(ctx context.Context, target Target) error {
 
 func (k *KeepAliveHTTP) Name() string {
 	return "keepalive-http"
+}
+
+// drainChunkedBody reads and discards a chunked transfer-encoded body.
+// Each chunk is: size (hex) CRLF data CRLF, ending with 0 CRLF CRLF
+func drainChunkedBody(reader *bufio.Reader) error {
+	for {
+		// Read chunk size line
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return err
+		}
+		line = strings.TrimSpace(line)
+
+		// Parse chunk size (hex)
+		var chunkSize int64
+		_, err = fmt.Sscanf(line, "%x", &chunkSize)
+		if err != nil {
+			return fmt.Errorf("invalid chunk size: %w", err)
+		}
+
+		// Last chunk
+		if chunkSize == 0 {
+			// Read trailing CRLF
+			_, err = reader.ReadString('\n')
+			return err
+		}
+
+		// Discard chunk data
+		if _, err := io.CopyN(io.Discard, reader, chunkSize); err != nil {
+			return err
+		}
+
+		// Read trailing CRLF after chunk data
+		if _, err := reader.ReadString('\n'); err != nil {
+			return err
+		}
+	}
 }

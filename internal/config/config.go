@@ -50,11 +50,12 @@ type PulseConfig struct {
 }
 
 type PerformanceConfig struct {
-	TargetSessions int
-	SessionsPerSec int
-	Duration       time.Duration
-	RampUpDuration time.Duration
-	Pulse          PulseConfig
+	TargetSessions         int
+	SessionsPerSec         int
+	Duration               time.Duration
+	RampUpDuration         time.Duration
+	MaxConsecutiveFailures int // 연속 실패 허용 횟수 (기본값: 5)
+	Pulse                  PulseConfig
 }
 
 type ReportingConfig struct {
@@ -87,10 +88,11 @@ func DefaultConfig() *Config {
 			PayloadSize:       10000,
 		},
 		Performance: PerformanceConfig{
-			TargetSessions: 100,
-			SessionsPerSec: 10,
-			Duration:       60 * time.Second,
-			RampUpDuration: 0,
+			TargetSessions:         100,
+			SessionsPerSec:         10,
+			Duration:               60 * time.Second,
+			RampUpDuration:         0,
+			MaxConsecutiveFailures: 5,
 			Pulse: PulseConfig{
 				Enabled:  false,
 				HighTime: 30 * time.Second,

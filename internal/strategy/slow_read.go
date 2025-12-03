@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"context"
+	"io"
 	"sync/atomic"
 	"time"
 
@@ -61,15 +62,17 @@ func (s *SlowRead) Execute(ctx context.Context, target Target) error {
 			// Read very small amount of data very slowly
 			n, err := mc.ReadWithTimeout(readBuffer, 30*time.Second)
 
-			if err != nil {
-				return err
-			}
-
-			if n == 0 {
-				// Server finished sending, send new request
+			// EOF 또는 연결 종료 시 새 요청 전송
+			if err == io.EOF || (err == nil && n == 0) {
+				// Server finished sending, send new request on the same connection
 				if _, err := mc.WriteWithTimeout([]byte(request), 5*time.Second); err != nil {
 					return err
 				}
+				continue
+			}
+
+			if err != nil {
+				return err
 			}
 		}
 	}

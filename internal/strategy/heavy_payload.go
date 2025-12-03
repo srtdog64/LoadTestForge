@@ -29,6 +29,7 @@ type HeavyPayload struct {
 	payloadSize       int
 	activeConnections int64
 	requestsSent      int64
+	metricsCallback   MetricsCallback
 }
 
 // Payload types
@@ -131,7 +132,10 @@ func (h *HeavyPayload) Execute(ctx context.Context, target Target) error {
 		req.Header.Set(k, v)
 	}
 
+	startTime := time.Now()
 	resp, err := h.client.Do(req)
+	latency := time.Since(startTime)
+
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
@@ -139,6 +143,15 @@ func (h *HeavyPayload) Execute(ctx context.Context, target Target) error {
 
 	io.Copy(io.Discard, resp.Body)
 	atomic.AddInt64(&h.requestsSent, 1)
+
+	// HTTP 4xx/5xx 에러를 실패로 처리
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("http error: %d", resp.StatusCode)
+	}
+
+	if h.metricsCallback != nil {
+		h.metricsCallback.RecordSuccessWithLatency(latency)
+	}
 
 	return nil
 }
@@ -313,4 +326,8 @@ func (h *HeavyPayload) ActiveConnections() int64 {
 
 func (h *HeavyPayload) RequestsSent() int64 {
 	return atomic.LoadInt64(&h.requestsSent)
+}
+
+func (h *HeavyPayload) SetMetricsCallback(callback MetricsCallback) {
+	h.metricsCallback = callback
 }
