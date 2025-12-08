@@ -157,6 +157,16 @@
 - [ ] `query-flood`: URL parser handles 1000+ params
 - [ ] `multipart`: Form handler processes large multipart
 
+### RUDY (R-U-Dead-Yet) Validation
+
+- [x] Basic slow POST with chunk delays (1-5s default)
+- [x] Session persistence with cookie tracking
+- [x] Form data generation (URL-encoded, JSON, multipart)
+- [x] Header randomization and evasion levels
+- [ ] Connection reuse across multiple requests
+- [ ] TCP-level optimizations (SO_SNDBUF tuning)
+- [ ] Response parsing for Set-Cookie headers
+
 ---
 
 ## Performance Benchmarks
@@ -177,11 +187,14 @@
 See [ROADMAP.md](./ROADMAP.md) for detailed feature planning.
 
 **Priority 1 (v1.1):**
-- [ ] TCP Socket Management Abstraction
+- [x] TCP Socket Management Abstraction (netutil/reconnect.go)
 - [ ] TLS JA3 Spoofing
 - [x] Header Randomization (Stealth Mode: Sec-Fetch-*, Sec-CH-UA)
 - [x] Cache Bypass (Randomize Mode: Realistic Query Strings)
 - [x] Latency Analysis (p50, p95, p99 Response Time Percentiles)
+- [x] RUDY (R-U-Dead-Yet) Slow POST Attack Strategy
+- [x] Common Session/Reconnect Logic (netutil/reconnect.go)
+- [x] Form Data Generation (httpdata/formdata.go)
 
 **Priority 2 (v1.2):**
 - [ ] Scenario-Based Testing

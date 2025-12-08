@@ -9,7 +9,8 @@ type Config struct {
 	Strategy    StrategyConfig
 	Performance PerformanceConfig
 	Reporting   ReportingConfig
-	BindIP      string
+	BindIP      string   // Single IP (legacy)
+	BindIPs     []string // Multiple IPs for round-robin binding
 }
 
 type TargetConfig struct {
@@ -35,6 +36,19 @@ type StrategyConfig struct {
 	PayloadType  string
 	PayloadDepth int
 	PayloadSize  int
+	// RUDY settings
+	ChunkDelayMin    time.Duration
+	ChunkDelayMax    time.Duration
+	ChunkSizeMin     int
+	ChunkSizeMax     int
+	PersistConn      bool
+	MaxReqPerSession int
+	KeepAliveTimeout time.Duration
+	SessionLifetime  time.Duration
+	SendBufferSize   int
+	UseJSON          bool
+	UseMultipart     bool
+	EvasionLevel     int
 	// Advanced options
 	EnableStealth  bool // Browser fingerprint headers (Sec-Fetch-*)
 	RandomizePath  bool // Realistic query strings for cache bypass
@@ -86,6 +100,18 @@ func DefaultConfig() *Config {
 			PayloadType:       "deep-json",
 			PayloadDepth:      50,
 			PayloadSize:       10000,
+			ChunkDelayMin:     1 * time.Second,
+			ChunkDelayMax:     5 * time.Second,
+			ChunkSizeMin:      1,
+			ChunkSizeMax:      100,
+			PersistConn:       true,
+			MaxReqPerSession:  10,
+			KeepAliveTimeout:  600 * time.Second,
+			SessionLifetime:   3600 * time.Second,
+			SendBufferSize:    1024,
+			UseJSON:           false,
+			UseMultipart:      false,
+			EvasionLevel:      2,
 		},
 		Performance: PerformanceConfig{
 			TargetSessions:         100,
