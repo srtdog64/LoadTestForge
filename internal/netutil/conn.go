@@ -15,8 +15,9 @@ import (
 type ConnConfig struct {
 	Timeout        time.Duration
 	MaxSessionLife time.Duration
-	LocalAddr      *net.TCPAddr
-	WindowSize     int // TCP receive buffer size (0 = default)
+	LocalAddr      *net.TCPAddr // Legacy single IP
+	BindConfig     *BindConfig  // Multi-IP support
+	WindowSize     int          // TCP receive buffer size (0 = default)
 }
 
 // DefaultConnConfig returns sensible defaults.
@@ -25,8 +26,18 @@ func DefaultConnConfig(bindIP string) ConnConfig {
 		Timeout:        10 * time.Second,
 		MaxSessionLife: 5 * time.Minute,
 		LocalAddr:      NewLocalTCPAddr(bindIP),
+		BindConfig:     NewBindConfig(bindIP),
 		WindowSize:     0,
 	}
+}
+
+// GetLocalAddr returns the next local address for binding.
+// Supports both legacy single IP and multi-IP pool.
+func (c *ConnConfig) GetLocalAddr() *net.TCPAddr {
+	if c.BindConfig != nil && c.BindConfig.HasMultipleIPs() {
+		return c.BindConfig.GetLocalAddr()
+	}
+	return c.LocalAddr
 }
 
 // ManagedConn wraps a net.Conn with automatic connection tracking.
@@ -54,7 +65,7 @@ func DialManaged(
 
 	dialer := &net.Dialer{
 		Timeout:   cfg.Timeout,
-		LocalAddr: cfg.LocalAddr,
+		LocalAddr: cfg.GetLocalAddr(),
 	}
 
 	var conn net.Conn

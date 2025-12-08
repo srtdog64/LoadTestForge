@@ -60,6 +60,7 @@ func NewHeavyPayload(timeout time.Duration, payloadType string, depth int, size 
 		Timeout:       30 * time.Second,
 		KeepAlive:     30 * time.Second,
 		LocalAddr:     netutil.NewLocalTCPAddr(bindIP),
+		BindConfig:    netutil.NewBindConfig(bindIP),
 		TLSSkipVerify: true,
 	}
 
@@ -144,7 +145,6 @@ func (h *HeavyPayload) Execute(ctx context.Context, target Target) error {
 	io.Copy(io.Discard, resp.Body)
 	atomic.AddInt64(&h.requestsSent, 1)
 
-	// HTTP 4xx/5xx 에러를 실패로 처리
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("http error: %d", resp.StatusCode)
 	}

@@ -48,6 +48,7 @@ func NewHTTPFlood(timeout time.Duration, method string, postDataSize int, reques
 		Timeout:       30 * time.Second,
 		KeepAlive:     30 * time.Second,
 		LocalAddr:     netutil.NewLocalTCPAddr(bindIP),
+		BindConfig:    netutil.NewBindConfig(bindIP),
 		TLSSkipVerify: true,
 	}
 
@@ -141,7 +142,6 @@ func (h *HTTPFlood) sendRequest(ctx context.Context, target Target, parsedURL *u
 
 	atomic.AddInt64(&h.requestsSent, 1)
 
-	// HTTP 4xx/5xx 에러를 실패로 처리
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("http error: %d", resp.StatusCode)
 	}

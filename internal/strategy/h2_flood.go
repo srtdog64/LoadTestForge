@@ -30,7 +30,7 @@ type H2Flood struct {
 	activeStreams        int64
 	requestsSent         int64
 	streamFailures       int64
-	localAddr            *net.TCPAddr
+	bindConfig           *netutil.BindConfig
 	metricsCallback      MetricsCallback
 }
 
@@ -47,7 +47,7 @@ func NewH2Flood(maxStreams int, burstSize int, bindIP string) *H2Flood {
 		streamBurstSize:      burstSize,
 		connectionTimeout:    10 * time.Second,
 		maxSessionLife:       5 * time.Minute,
-		localAddr:            netutil.NewLocalTCPAddr(bindIP),
+		bindConfig:           netutil.NewBindConfig(bindIP),
 	}
 }
 
@@ -75,7 +75,7 @@ func (h *H2Flood) Execute(ctx context.Context, target Target) error {
 
 	dialer := &net.Dialer{
 		Timeout:   h.connectionTimeout,
-		LocalAddr: h.localAddr,
+		LocalAddr: h.bindConfig.GetLocalAddr(),
 	}
 
 	netConn, err := dialer.DialContext(sessionCtx, "tcp", host)
@@ -186,13 +186,11 @@ func (h *H2Flood) sendStream(ctx context.Context, cc *http2.ClientConn, targetUR
 
 	atomic.AddInt64(&h.requestsSent, 1)
 
-	// HTTP 4xx/5xx 에러를 실패로 처리
 	if resp.StatusCode >= 400 {
 		atomic.AddInt64(&h.streamFailures, 1)
 		return
 	}
 
-	// 메트릭 콜백이 있으면 성공 기록
 	if h.metricsCallback != nil {
 		h.metricsCallback.RecordSuccessWithLatency(latency)
 	}
@@ -205,7 +203,7 @@ func (h *H2Flood) executeH2C(ctx context.Context, target Target, parsedURL *url.
 
 	dialer := &net.Dialer{
 		Timeout:   h.connectionTimeout,
-		LocalAddr: h.localAddr,
+		LocalAddr: h.bindConfig.GetLocalAddr(),
 	}
 
 	conn, err := dialer.DialContext(sessionCtx, "tcp", host)

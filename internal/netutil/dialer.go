@@ -13,7 +13,8 @@ import (
 type DialerConfig struct {
 	Timeout       time.Duration
 	KeepAlive     time.Duration
-	LocalAddr     *net.TCPAddr
+	LocalAddr     *net.TCPAddr // Legacy single IP
+	BindConfig    *BindConfig  // Multi-IP support
 	TLSSkipVerify bool
 }
 
@@ -23,8 +24,18 @@ func DefaultDialerConfig(bindIP string) DialerConfig {
 		Timeout:       30 * time.Second,
 		KeepAlive:     30 * time.Second,
 		LocalAddr:     NewLocalTCPAddr(bindIP),
+		BindConfig:    NewBindConfig(bindIP),
 		TLSSkipVerify: true,
 	}
+}
+
+// GetLocalAddr returns the next local address for binding.
+// Supports both legacy single IP and multi-IP pool.
+func (c *DialerConfig) GetLocalAddr() *net.TCPAddr {
+	if c.BindConfig != nil && c.BindConfig.HasMultipleIPs() {
+		return c.BindConfig.GetLocalAddr()
+	}
+	return c.LocalAddr
 }
 
 // NewDialer creates a net.Dialer with the given configuration.
@@ -32,7 +43,7 @@ func NewDialer(cfg DialerConfig) *net.Dialer {
 	return &net.Dialer{
 		Timeout:   cfg.Timeout,
 		KeepAlive: cfg.KeepAlive,
-		LocalAddr: cfg.LocalAddr,
+		LocalAddr: cfg.GetLocalAddr(),
 	}
 }
 
@@ -46,6 +57,7 @@ func NewTLSConfig(skipVerify bool) *tls.Config {
 // NewTrackedTransport creates an http.Transport with connection tracking.
 // The counter is incremented when a connection is established and
 // decremented when it is closed.
+// Supports multi-IP round-robin binding.
 func NewTrackedTransport(cfg DialerConfig, counter *int64) *http.Transport {
 	transport := &http.Transport{
 		MaxIdleConns:          100,
@@ -58,7 +70,12 @@ func NewTrackedTransport(cfg DialerConfig, counter *int64) *http.Transport {
 	}
 
 	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		dialer := NewDialer(cfg)
+		dialer := &net.Dialer{
+			Timeout:   cfg.Timeout,
+			KeepAlive: cfg.KeepAlive,
+			LocalAddr: cfg.GetLocalAddr(),
+		}
+
 		conn, err := dialer.DialContext(ctx, network, addr)
 		if err != nil {
 			return nil, err

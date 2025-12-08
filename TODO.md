@@ -163,9 +163,10 @@
 - [x] Session persistence with cookie tracking
 - [x] Form data generation (URL-encoded, JSON, multipart)
 - [x] Header randomization and evasion levels
-- [ ] Connection reuse across multiple requests
-- [ ] TCP-level optimizations (SO_SNDBUF tuning)
-- [ ] Response parsing for Set-Cookie headers
+- [x] Connection reuse across multiple requests
+- [x] TCP-level optimizations (SO_SNDBUF tuning)
+- [x] Response parsing for Set-Cookie headers
+- [x] Multi-IP round-robin binding support
 
 ---
 
@@ -195,6 +196,7 @@ See [ROADMAP.md](./ROADMAP.md) for detailed feature planning.
 - [x] RUDY (R-U-Dead-Yet) Slow POST Attack Strategy
 - [x] Common Session/Reconnect Logic (netutil/reconnect.go)
 - [x] Form Data Generation (httpdata/formdata.go)
+- [x] Multi-IP Round-Robin Binding (netutil/addr.go IPPool/BindConfig)
 
 **Priority 2 (v1.2):**
 - [ ] Scenario-Based Testing

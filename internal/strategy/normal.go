@@ -27,6 +27,7 @@ func NewNormalHTTP(timeout time.Duration, bindIP string) *NormalHTTP {
 		Timeout:       30 * time.Second,
 		KeepAlive:     30 * time.Second,
 		LocalAddr:     netutil.NewLocalTCPAddr(bindIP),
+		BindConfig:    netutil.NewBindConfig(bindIP),
 		TLSSkipVerify: false,
 	}
 
