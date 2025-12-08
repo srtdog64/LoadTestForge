@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jdw/loadtestforge/internal/config"
 	"github.com/jdw/loadtestforge/internal/httpdata"
 	"github.com/jdw/loadtestforge/internal/netutil"
 )
@@ -14,6 +15,7 @@ type SlowlorisClassic struct {
 	connConfig        netutil.ConnConfig
 	headerRandomizer  *httpdata.HeaderRandomizer
 	activeConnections int64
+	metricsCallback   MetricsCallback
 }
 
 func NewSlowlorisClassic(keepAliveInterval time.Duration, bindIP string) *SlowlorisClassic {
@@ -24,20 +26,41 @@ func NewSlowlorisClassic(keepAliveInterval time.Duration, bindIP string) *Slowlo
 	}
 }
 
+// SetMetricsCallback sets the metrics callback for telemetry.
+func (s *SlowlorisClassic) SetMetricsCallback(callback MetricsCallback) {
+	s.metricsCallback = callback
+}
+
 func (s *SlowlorisClassic) Execute(ctx context.Context, target Target) error {
+	connID := generateConnID()
+	startTime := time.Now()
+
 	mc, parsedURL, err := netutil.DialManaged(ctx, target.URL, s.connConfig, &s.activeConnections)
 	if err != nil {
 		return err
 	}
 	defer mc.Close()
 
+	// Record connection start
+	if s.metricsCallback != nil {
+		s.metricsCallback.RecordConnectionStart(connID, mc.RemoteAddr().String())
+	}
+
 	userAgent := httpdata.RandomUserAgent()
 
 	// Send incomplete HTTP request (no final \r\n to terminate headers)
 	incompleteRequest := s.headerRandomizer.BuildIncompleteRequest(parsedURL, userAgent)
 
-	if _, err := mc.WriteWithTimeout([]byte(incompleteRequest), 5*time.Second); err != nil {
+	if _, err := mc.WriteWithTimeout([]byte(incompleteRequest), config.DefaultWriteTimeout); err != nil {
+		if s.metricsCallback != nil {
+			s.metricsCallback.RecordSocketTimeout()
+		}
 		return err
+	}
+
+	// Record initial success
+	if s.metricsCallback != nil {
+		s.metricsCallback.RecordSuccessWithLatency(time.Since(startTime))
 	}
 
 	ticker := time.NewTicker(s.keepAliveInterval)
@@ -46,11 +69,22 @@ func (s *SlowlorisClassic) Execute(ctx context.Context, target Target) error {
 	for {
 		select {
 		case <-mc.Context().Done():
+			if s.metricsCallback != nil {
+				s.metricsCallback.RecordConnectionEnd(connID)
+			}
 			return nil
 		case <-ticker.C:
 			dummyHeader := httpdata.GenerateDummyHeader()
-			if _, err := mc.WriteWithTimeout([]byte(dummyHeader), 5*time.Second); err != nil {
+			if _, err := mc.WriteWithTimeout([]byte(dummyHeader), config.DefaultWriteTimeout); err != nil {
+				if s.metricsCallback != nil {
+					s.metricsCallback.RecordSocketTimeout()
+					s.metricsCallback.RecordConnectionEnd(connID)
+				}
 				return err
+			}
+			// Record activity
+			if s.metricsCallback != nil {
+				s.metricsCallback.RecordConnectionActivity(connID)
 			}
 		}
 	}

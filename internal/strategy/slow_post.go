@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jdw/loadtestforge/internal/config"
 	"github.com/jdw/loadtestforge/internal/httpdata"
 	"github.com/jdw/loadtestforge/internal/netutil"
 )
@@ -19,6 +20,7 @@ type SlowPost struct {
 	connConfig        netutil.ConnConfig
 	headerRandomizer  *httpdata.HeaderRandomizer
 	activeConnections int64
+	metricsCallback   MetricsCallback
 }
 
 func NewSlowPost(sendInterval time.Duration, contentLength int, bindIP string) *SlowPost {
@@ -30,12 +32,25 @@ func NewSlowPost(sendInterval time.Duration, contentLength int, bindIP string) *
 	}
 }
 
+// SetMetricsCallback sets the metrics callback for telemetry.
+func (s *SlowPost) SetMetricsCallback(callback MetricsCallback) {
+	s.metricsCallback = callback
+}
+
 func (s *SlowPost) Execute(ctx context.Context, target Target) error {
+	connID := generateConnID()
+	startTime := time.Now()
+
 	mc, parsedURL, err := netutil.DialManaged(ctx, target.URL, s.connConfig, &s.activeConnections)
 	if err != nil {
 		return err
 	}
 	defer mc.Close()
+
+	// Record connection start
+	if s.metricsCallback != nil {
+		s.metricsCallback.RecordConnectionStart(connID, mc.RemoteAddr().String())
+	}
 
 	userAgent := httpdata.RandomUserAgent()
 
@@ -47,8 +62,16 @@ func (s *SlowPost) Execute(ctx context.Context, target Target) error {
 		"application/x-www-form-urlencoded",
 	)
 
-	if _, err := mc.WriteWithTimeout([]byte(postRequest), 5*time.Second); err != nil {
+	if _, err := mc.WriteWithTimeout([]byte(postRequest), config.DefaultWriteTimeout); err != nil {
+		if s.metricsCallback != nil {
+			s.metricsCallback.RecordSocketTimeout()
+		}
 		return err
+	}
+
+	// Record initial success
+	if s.metricsCallback != nil {
+		s.metricsCallback.RecordSuccessWithLatency(time.Since(startTime))
 	}
 
 	ticker := time.NewTicker(s.sendInterval)
@@ -60,12 +83,19 @@ func (s *SlowPost) Execute(ctx context.Context, target Target) error {
 	for {
 		select {
 		case <-mc.Context().Done():
+			if s.metricsCallback != nil {
+				s.metricsCallback.RecordConnectionEnd(connID)
+			}
 			return nil
 		case <-ticker.C:
 			if bytesSent >= s.contentLength {
 				// Reset and start new request
 				bytesSent = 0
-				if _, err := mc.WriteWithTimeout([]byte(postRequest), 5*time.Second); err != nil {
+				if _, err := mc.WriteWithTimeout([]byte(postRequest), config.DefaultWriteTimeout); err != nil {
+					if s.metricsCallback != nil {
+						s.metricsCallback.RecordSocketTimeout()
+						s.metricsCallback.RecordConnectionEnd(connID)
+					}
 					return err
 				}
 				continue
@@ -73,10 +103,19 @@ func (s *SlowPost) Execute(ctx context.Context, target Target) error {
 
 			// Send single byte of body
 			bodyByte := bodyChars[rand.Intn(len(bodyChars))]
-			if _, err := mc.WriteWithTimeout([]byte{byte(bodyByte)}, 5*time.Second); err != nil {
+			if _, err := mc.WriteWithTimeout([]byte{byte(bodyByte)}, config.DefaultWriteTimeout); err != nil {
+				if s.metricsCallback != nil {
+					s.metricsCallback.RecordSocketTimeout()
+					s.metricsCallback.RecordConnectionEnd(connID)
+				}
 				return err
 			}
 			bytesSent++
+
+			// Record activity periodically (every 100 bytes)
+			if s.metricsCallback != nil && bytesSent%100 == 0 {
+				s.metricsCallback.RecordConnectionActivity(connID)
+			}
 		}
 	}
 }

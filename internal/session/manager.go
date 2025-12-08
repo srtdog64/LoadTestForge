@@ -44,10 +44,10 @@ func NewManager(
 	}
 
 	if m.perf.Pulse.LowRatio <= 0 {
-		m.perf.Pulse.LowRatio = 0.1
+		m.perf.Pulse.LowRatio = config.DefaultPulseLowRatio
 	}
 	if m.perf.Pulse.WaveType == "" {
-		m.perf.Pulse.WaveType = "square"
+		m.perf.Pulse.WaveType = config.WaveTypeSquare
 	}
 
 	if metricsAware, ok := strat.(strategy.MetricsAware); ok {
@@ -72,7 +72,7 @@ func (m *Manager) Run(ctx context.Context) error {
 }
 
 func (m *Manager) trackConnections(ctx context.Context, tracker strategy.ConnectionTracker) {
-	ticker := time.NewTicker(500 * time.Millisecond)
+	ticker := time.NewTicker(config.ConnectionTrackInterval)
 	defer ticker.Stop()
 
 	for {
@@ -87,7 +87,7 @@ func (m *Manager) trackConnections(ctx context.Context, tracker strategy.Connect
 
 func (m *Manager) runWithRampUp(ctx context.Context) error {
 	startTime := time.Now()
-	tickInterval := 100 * time.Millisecond
+	tickInterval := config.SessionTickInterval
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
 
@@ -122,7 +122,7 @@ func (m *Manager) runWithPulse(ctx context.Context) error {
 	cycleStart := time.Now()
 	isHighPhase := true
 
-	tickInterval := 50 * time.Millisecond
+	tickInterval := config.PulseTickInterval
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
 
@@ -169,8 +169,8 @@ func (m *Manager) runWithPulse(ctx context.Context) error {
 // spawnSessions creates sessions up to the limit allowed per tick interval.
 // This prevents blocking the control loop when needed count is large.
 func (m *Manager) spawnSessions(ctx context.Context, needed int, tickInterval time.Duration) {
-	// Calculate max sessions creatable in this tick (with 1.5x burst allowance)
-	maxPerTick := int(float64(m.perf.SessionsPerSec) * tickInterval.Seconds() * 1.5)
+	// Calculate max sessions creatable in this tick (with burst allowance)
+	maxPerTick := int(float64(m.perf.SessionsPerSec) * tickInterval.Seconds() * config.SpawnBurstMultiplier)
 	if maxPerTick < 1 {
 		maxPerTick = 1
 	}
@@ -218,7 +218,7 @@ func (m *Manager) calculatePulseTarget(isHigh bool, elapsed time.Duration) int {
 	}
 
 	switch m.perf.Pulse.WaveType {
-	case "sine":
+	case config.WaveTypeSine:
 		var phaseDuration time.Duration
 		if isHigh {
 			phaseDuration = m.perf.Pulse.HighTime
@@ -238,7 +238,7 @@ func (m *Manager) calculatePulseTarget(isHigh bool, elapsed time.Duration) int {
 		sineValue := (1 + math.Sin(progress*math.Pi-math.Pi/2)) / 2
 		return lowTarget + int(float64(highTarget-lowTarget)*sineValue)
 
-	case "sawtooth":
+	case config.WaveTypeSawtooth:
 		if isHigh {
 			progress := float64(elapsed) / float64(m.perf.Pulse.HighTime)
 			if progress > 1 {
@@ -248,7 +248,7 @@ func (m *Manager) calculatePulseTarget(isHigh bool, elapsed time.Duration) int {
 		}
 		return lowTarget
 
-	case "square":
+	case config.WaveTypeSquare:
 		fallthrough
 	default:
 		if isHigh {
@@ -259,7 +259,7 @@ func (m *Manager) calculatePulseTarget(isHigh bool, elapsed time.Duration) int {
 }
 
 func (m *Manager) runSteadyState(ctx context.Context) error {
-	tickInterval := 100 * time.Millisecond
+	tickInterval := config.SessionTickInterval
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
 
@@ -300,7 +300,7 @@ func (m *Manager) launchSession(parentCtx context.Context) {
 	consecutiveFailures := 0
 	maxConsecutiveFailures := m.perf.MaxConsecutiveFailures
 	if maxConsecutiveFailures <= 0 {
-		maxConsecutiveFailures = 5
+		maxConsecutiveFailures = config.DefaultMaxConsecutiveFailures
 	}
 
 	for {
@@ -317,7 +317,7 @@ func (m *Manager) launchSession(parentCtx context.Context) {
 					return
 				}
 
-				backoff := time.Duration(consecutiveFailures) * time.Second
+				backoff := time.Duration(consecutiveFailures) * config.BaseBackoffDelay
 				select {
 				case <-ctx.Done():
 					return
@@ -329,11 +329,11 @@ func (m *Manager) launchSession(parentCtx context.Context) {
 				consecutiveFailures = 0
 			}
 
-			// Quick retry after success (50-200ms like Python)
+			// Quick retry after success
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(50 * time.Millisecond):
+			case <-time.After(config.QuickRetryDelay):
 			}
 		}
 	}
@@ -353,7 +353,7 @@ func (m *Manager) GetMetrics() *metrics.Collector {
 }
 
 func generateSessionID() string {
-	b := make([]byte, 8)
+	b := make([]byte, config.SessionIDLength)
 	if _, err := rand.Read(b); err != nil {
 		return fmt.Sprintf("session-%d", time.Now().UnixNano())
 	}

@@ -405,3 +405,186 @@ func GenerateDummyHeader() string {
 		return fmt.Sprintf("X-Request-ID: %d\r\n", rand.Intn(999999999))
 	}
 }
+
+// =============================================================================
+// Evasion Headers (for WAF/Bot Detection Bypass)
+// =============================================================================
+
+// EvasionLevel defines the sophistication of evasion headers.
+const (
+	EvasionLevelBasic      = 1 // Basic headers only
+	EvasionLevelNormal     = 2 // Add Sec-Fetch-* headers
+	EvasionLevelAggressive = 3 // Add Client Hints and sophisticated headers
+)
+
+// EvasionHeaderGenerator generates headers to evade WAF/bot detection.
+type EvasionHeaderGenerator struct {
+	Level int
+}
+
+// NewEvasionHeaderGenerator creates a new evasion header generator.
+func NewEvasionHeaderGenerator(level int) *EvasionHeaderGenerator {
+	if level < EvasionLevelBasic {
+		level = EvasionLevelBasic
+	}
+	if level > EvasionLevelAggressive {
+		level = EvasionLevelAggressive
+	}
+	return &EvasionHeaderGenerator{Level: level}
+}
+
+// GenerateEvasionHeaders returns a slice of evasion header strings.
+// Headers are randomly selected based on the evasion level.
+func (e *EvasionHeaderGenerator) GenerateEvasionHeaders() []string {
+	var headers []string
+
+	// Level 2+: Sec-Fetch headers
+	if e.Level >= EvasionLevelNormal {
+		secFetchHeaders := []string{
+			"DNT: 1",
+			"Upgrade-Insecure-Requests: 1",
+			"Sec-Fetch-Dest: document",
+			"Sec-Fetch-Mode: navigate",
+			fmt.Sprintf("Sec-Fetch-Site: %s", RandomSecFetchSite()),
+			"Sec-Fetch-User: ?1",
+		}
+
+		// Randomly select 2-4 headers
+		count := rand.Intn(3) + 2
+		perm := rand.Perm(len(secFetchHeaders))
+		for i := 0; i < count && i < len(perm); i++ {
+			headers = append(headers, secFetchHeaders[perm[i]])
+		}
+	}
+
+	// Level 3: Client Hints and sophisticated headers
+	if e.Level >= EvasionLevelAggressive {
+		chromeVer := RandomChromeVersion()
+		clientHints := []string{
+			fmt.Sprintf(`Sec-CH-UA: "Chromium";v="%s", "Google Chrome";v="%s", "Not-A.Brand";v="99"`, chromeVer, chromeVer),
+			fmt.Sprintf("Sec-CH-UA-Mobile: %s", RandomMobile()),
+			fmt.Sprintf(`Sec-CH-UA-Platform: "%s"`, RandomPlatform()),
+			fmt.Sprintf("X-Request-ID: %s", GenerateSessionID()),
+			"TE: Trailers",
+		}
+
+		// Randomly select 1-3 headers
+		count := rand.Intn(3) + 1
+		perm := rand.Perm(len(clientHints))
+		for i := 0; i < count && i < len(perm); i++ {
+			headers = append(headers, clientHints[perm[i]])
+		}
+	}
+
+	return headers
+}
+
+// GenerateFullEvasionHeaders returns all possible evasion headers for the level.
+func (e *EvasionHeaderGenerator) GenerateFullEvasionHeaders() []string {
+	var headers []string
+
+	if e.Level >= EvasionLevelNormal {
+		headers = append(headers,
+			"DNT: 1",
+			"Upgrade-Insecure-Requests: 1",
+			"Sec-Fetch-Dest: document",
+			"Sec-Fetch-Mode: navigate",
+			fmt.Sprintf("Sec-Fetch-Site: %s", RandomSecFetchSite()),
+			"Sec-Fetch-User: ?1",
+		)
+	}
+
+	if e.Level >= EvasionLevelAggressive {
+		chromeVer := RandomChromeVersion()
+		headers = append(headers,
+			fmt.Sprintf(`Sec-CH-UA: "Chromium";v="%s", "Google Chrome";v="%s", "Not-A.Brand";v="99"`, chromeVer, chromeVer),
+			fmt.Sprintf("Sec-CH-UA-Mobile: %s", RandomMobile()),
+			fmt.Sprintf(`Sec-CH-UA-Platform: "%s"`, RandomPlatform()),
+		)
+	}
+
+	return headers
+}
+
+// AddEvasionHeadersToSet adds evasion headers to a HeaderSet.
+func (e *EvasionHeaderGenerator) AddEvasionHeadersToSet(hs *HeaderSet) {
+	for _, h := range e.GenerateEvasionHeaders() {
+		parts := strings.SplitN(h, ": ", 2)
+		if len(parts) == 2 {
+			hs.Add(parts[0], parts[1])
+		}
+	}
+}
+
+// =============================================================================
+// Stealth Headers (Browser Fingerprinting)
+// =============================================================================
+
+// StealthHeaderSet generates a complete set of browser-like headers.
+type StealthHeaderSet struct {
+	UserAgent    string
+	EvasionLevel int
+	AddOrigin    bool
+	AddReferer   bool
+	AddCSRF      bool
+}
+
+// NewStealthHeaderSet creates a new stealth header configuration.
+func NewStealthHeaderSet(userAgent string, evasionLevel int) *StealthHeaderSet {
+	return &StealthHeaderSet{
+		UserAgent:    userAgent,
+		EvasionLevel: evasionLevel,
+		AddOrigin:    rand.Float32() < 0.7,
+		AddReferer:   rand.Float32() < 0.8,
+		AddCSRF:      rand.Float32() < 0.5,
+	}
+}
+
+// GenerateHeaders returns a slice of stealth header strings for POST requests.
+func (s *StealthHeaderSet) GenerateHeaders(host, path, contentType string, contentLength int) []string {
+	var headers []string
+
+	// Essential headers
+	headers = append(headers, fmt.Sprintf("Host: %s", host))
+	headers = append(headers, fmt.Sprintf("User-Agent: %s", s.UserAgent))
+	headers = append(headers, fmt.Sprintf("Content-Type: %s", contentType))
+	headers = append(headers, fmt.Sprintf("Content-Length: %d", contentLength))
+
+	// Standard browser headers
+	headers = append(headers, fmt.Sprintf("Accept: %s", RandomAccept()))
+	headers = append(headers, fmt.Sprintf("Accept-Language: %s", RandomAcceptLanguage()))
+	headers = append(headers, fmt.Sprintf("Accept-Encoding: %s", RandomAcceptEncoding()))
+	headers = append(headers, "Connection: keep-alive")
+
+	// Conditional headers
+	if s.AddOrigin {
+		headers = append(headers, fmt.Sprintf("Origin: https://%s", host))
+	}
+
+	if s.AddReferer {
+		headers = append(headers, fmt.Sprintf("Referer: https://%s%s", host, path))
+	}
+
+	if s.AddCSRF {
+		headers = append(headers, fmt.Sprintf("X-CSRF-Token: %s", GenerateSessionID()))
+		headers = append(headers, "X-Requested-With: XMLHttpRequest")
+	}
+
+	// Evasion headers
+	if s.EvasionLevel >= EvasionLevelNormal {
+		evasion := NewEvasionHeaderGenerator(s.EvasionLevel)
+		headers = append(headers, evasion.GenerateEvasionHeaders()...)
+	}
+
+	return headers
+}
+
+// ShuffleHeaders randomly reorders a slice of headers.
+func ShuffleHeaders(headers []string) []string {
+	shuffled := make([]string, len(headers))
+	copy(shuffled, headers)
+	rand.Shuffle(len(shuffled), func(i, j int) {
+		shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
+	})
+	return shuffled
+}

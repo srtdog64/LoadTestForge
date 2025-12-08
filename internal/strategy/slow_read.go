@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jdw/loadtestforge/internal/config"
 	"github.com/jdw/loadtestforge/internal/httpdata"
 	"github.com/jdw/loadtestforge/internal/netutil"
 )
@@ -19,6 +20,7 @@ type SlowRead struct {
 	connConfig        netutil.ConnConfig
 	headerRandomizer  *httpdata.HeaderRandomizer
 	activeConnections int64
+	metricsCallback   MetricsCallback
 }
 
 func NewSlowRead(readInterval time.Duration, readSize int, windowSize int, bindIP string) *SlowRead {
@@ -33,46 +35,89 @@ func NewSlowRead(readInterval time.Duration, readSize int, windowSize int, bindI
 	}
 }
 
+// SetMetricsCallback sets the metrics callback for telemetry.
+func (s *SlowRead) SetMetricsCallback(callback MetricsCallback) {
+	s.metricsCallback = callback
+}
+
 func (s *SlowRead) Execute(ctx context.Context, target Target) error {
+	connID := generateConnID()
+	startTime := time.Now()
+
 	mc, parsedURL, err := netutil.DialManaged(ctx, target.URL, s.connConfig, &s.activeConnections)
 	if err != nil {
 		return err
 	}
 	defer mc.Close()
 
+	// Record connection start
+	if s.metricsCallback != nil {
+		s.metricsCallback.RecordConnectionStart(connID, mc.RemoteAddr().String())
+	}
+
 	userAgent := httpdata.RandomUserAgent()
 
 	// Build GET request (Accept-Encoding: identity to prevent compression)
 	request := s.headerRandomizer.BuildGETRequest(parsedURL, userAgent)
 
-	if _, err := mc.WriteWithTimeout([]byte(request), 5*time.Second); err != nil {
+	if _, err := mc.WriteWithTimeout([]byte(request), config.DefaultWriteTimeout); err != nil {
+		if s.metricsCallback != nil {
+			s.metricsCallback.RecordSocketTimeout()
+		}
 		return err
+	}
+
+	// Record initial success
+	if s.metricsCallback != nil {
+		s.metricsCallback.RecordSuccessWithLatency(time.Since(startTime))
 	}
 
 	ticker := time.NewTicker(s.readInterval)
 	defer ticker.Stop()
 
 	readBuffer := make([]byte, s.readSize)
+	readCount := 0
 
 	for {
 		select {
 		case <-mc.Context().Done():
+			if s.metricsCallback != nil {
+				s.metricsCallback.RecordConnectionEnd(connID)
+			}
 			return nil
 		case <-ticker.C:
 			// Read very small amount of data very slowly
-			n, err := mc.ReadWithTimeout(readBuffer, 30*time.Second)
+			n, err := mc.ReadWithTimeout(readBuffer, config.DefaultReadTimeout)
 
-			// EOF 또는 연결 종료 시 새 요청 전송
+			// EOF or connection closed - send new request
 			if err == io.EOF || (err == nil && n == 0) {
 				// Server finished sending, send new request on the same connection
-				if _, err := mc.WriteWithTimeout([]byte(request), 5*time.Second); err != nil {
+				if _, err := mc.WriteWithTimeout([]byte(request), config.DefaultWriteTimeout); err != nil {
+					if s.metricsCallback != nil {
+						s.metricsCallback.RecordSocketTimeout()
+						s.metricsCallback.RecordConnectionEnd(connID)
+					}
 					return err
+				}
+				// Record reconnect
+				if s.metricsCallback != nil {
+					s.metricsCallback.RecordSocketReconnect()
 				}
 				continue
 			}
 
 			if err != nil {
+				if s.metricsCallback != nil {
+					s.metricsCallback.RecordSocketTimeout()
+					s.metricsCallback.RecordConnectionEnd(connID)
+				}
 				return err
+			}
+
+			readCount++
+			// Record activity periodically (every 10 reads)
+			if s.metricsCallback != nil && readCount%10 == 0 {
+				s.metricsCallback.RecordConnectionActivity(connID)
 			}
 		}
 	}
