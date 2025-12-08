@@ -44,6 +44,18 @@ var CacheControlOptions = []string{
 	"must-revalidate",
 }
 
+// Charsets contains common character encoding values.
+var Charsets = []string{
+	"UTF-8",
+	"utf-8",
+	"ISO-8859-1",
+	"windows-1251",
+	"EUC-KR",
+	"Shift_JIS",
+	"GB2312",
+	"GBK",
+}
+
 // DeviceTypes contains device type identifiers for query parameters.
 var DeviceTypes = []string{
 	"desktop",
@@ -100,6 +112,11 @@ func RandomAcceptEncoding() string {
 // RandomCacheControl returns a random Cache-Control header value.
 func RandomCacheControl() string {
 	return CacheControlOptions[rand.Intn(len(CacheControlOptions))]
+}
+
+// RandomCharset returns a random character encoding value.
+func RandomCharset() string {
+	return Charsets[rand.Intn(len(Charsets))]
 }
 
 // RandomDeviceType returns a random device type.

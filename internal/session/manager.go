@@ -329,10 +329,11 @@ func (m *Manager) launchSession(parentCtx context.Context) {
 				consecutiveFailures = 0
 			}
 
+			// Quick retry after success (50-200ms like Python)
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(100 * time.Millisecond):
+			case <-time.After(50 * time.Millisecond):
 			}
 		}
 	}

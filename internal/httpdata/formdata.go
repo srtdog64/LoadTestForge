@@ -52,6 +52,9 @@ var FormEndpoints = []string{
 	"/contact", "/message", "/upload", "/api/submit",
 	"/wp-comments-post.php", "/wp-admin/admin-ajax.php",
 	"/index.php", "/submit.php", "/process.php",
+	"/api/v1/submit", "/api/v2/data", "/graphql",
+	"/newsletter", "/subscribe", "/feedback",
+	"/register", "/signup", "/checkout",
 }
 
 // FormReferers contains referrer URLs by form type.

