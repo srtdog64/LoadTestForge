@@ -14,17 +14,18 @@ import (
 // ConnConfig holds connection configuration options.
 type ConnConfig struct {
 	Timeout        time.Duration
-	MaxSessionLife time.Duration
-	LocalAddr      *net.TCPAddr // Legacy single IP
-	BindConfig     *BindConfig  // Multi-IP support
-	WindowSize     int          // TCP receive buffer size (0 = default)
+	MaxSessionLife time.Duration // 0 = unlimited (hold until server closes)
+	LocalAddr      *net.TCPAddr  // Legacy single IP
+	BindConfig     *BindConfig   // Multi-IP support
+	WindowSize     int           // TCP receive buffer size (0 = default)
 }
 
 // DefaultConnConfig returns sensible defaults.
+// MaxSessionLife=0 means unlimited (hold connection until server closes).
 func DefaultConnConfig(bindIP string) ConnConfig {
 	return ConnConfig{
 		Timeout:        10 * time.Second,
-		MaxSessionLife: 5 * time.Minute,
+		MaxSessionLife: 0, // unlimited by default
 		LocalAddr:      NewLocalTCPAddr(bindIP),
 		BindConfig:     NewBindConfig(bindIP),
 		WindowSize:     0,
@@ -50,6 +51,7 @@ type ManagedConn struct {
 
 // DialManaged establishes a managed TCP connection with optional TLS.
 // It automatically increments the counter on success and decrements on Close.
+// If cfg.MaxSessionLife is 0, connection is held until server closes or parent context cancels.
 func DialManaged(
 	ctx context.Context,
 	targetURL string,
@@ -61,7 +63,14 @@ func DialManaged(
 		return nil, nil, err
 	}
 
-	sessionCtx, cancel := context.WithTimeout(ctx, cfg.MaxSessionLife)
+	// Create session context: unlimited if MaxSessionLife=0, otherwise with timeout
+	var sessionCtx context.Context
+	var cancel context.CancelFunc
+	if cfg.MaxSessionLife > 0 {
+		sessionCtx, cancel = context.WithTimeout(ctx, cfg.MaxSessionLife)
+	} else {
+		sessionCtx, cancel = context.WithCancel(ctx)
+	}
 
 	dialer := &net.Dialer{
 		Timeout:   cfg.Timeout,

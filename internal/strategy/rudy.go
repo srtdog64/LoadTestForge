@@ -463,7 +463,8 @@ func (r *RUDY) Execute(ctx context.Context, target Target) error {
 			r.readResponseAndParseCookies(conn, session)
 		}
 
-		if session.RequestCount >= r.config.MaxRequestsPerSession {
+		// Check max requests limit (0 = unlimited, hold until server closes)
+		if r.config.MaxRequestsPerSession > 0 && session.RequestCount >= r.config.MaxRequestsPerSession {
 			if r.config.PersistConnections {
 				r.sessionManager.StoreSession(session)
 			}

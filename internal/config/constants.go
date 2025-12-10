@@ -52,6 +52,15 @@ const (
 
 	// PruneDampingFactor is the damping factor for pruning sessions (50%)
 	PruneDampingFactor = 0.5
+
+	// UnlimitedSessionLife indicates connection should be held until server closes (0 = unlimited)
+	UnlimitedSessionLife = 0
+
+	// UnlimitedRequests indicates no limit on requests per session (0 = unlimited)
+	UnlimitedRequests = 0
+
+	// DefaultMaxSessionLife is the default maximum session lifetime
+	DefaultMaxSessionLife = 5 * time.Minute
 )
 
 // =============================================================================

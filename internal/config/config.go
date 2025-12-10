@@ -42,9 +42,9 @@ type StrategyConfig struct {
 	ChunkSizeMin     int
 	ChunkSizeMax     int
 	PersistConn      bool
-	MaxReqPerSession int
+	MaxReqPerSession int           // 0 = unlimited (hold until server closes)
 	KeepAliveTimeout time.Duration
-	SessionLifetime  time.Duration
+	SessionLifetime  time.Duration // 0 = unlimited (hold until server closes)
 	SendBufferSize   int
 	UseJSON          bool
 	UseMultipart     bool
@@ -105,9 +105,9 @@ func DefaultConfig() *Config {
 			ChunkSizeMin:      1,
 			ChunkSizeMax:      100,
 			PersistConn:       true,
-			MaxReqPerSession:  10,
+			MaxReqPerSession:  0, // 0 = unlimited (hold until server closes)
 			KeepAliveTimeout:  600 * time.Second,
-			SessionLifetime:   3600 * time.Second,
+			SessionLifetime:   0, // 0 = unlimited (hold until server closes)
 			SendBufferSize:    1024,
 			UseJSON:           false,
 			UseMultipart:      false,

@@ -259,6 +259,9 @@ func (m *Manager) calculatePulseTarget(isHigh bool, elapsed time.Duration) int {
 }
 
 func (m *Manager) runSteadyState(ctx context.Context) error {
+	// No ramp-up: spawn all sessions immediately without rate limiting
+	m.spawnSessionsImmediate(ctx, m.perf.TargetSessions)
+
 	tickInterval := config.SessionTickInterval
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
@@ -269,10 +272,24 @@ func (m *Manager) runSteadyState(ctx context.Context) error {
 			m.shutdownAll()
 			return ctx.Err()
 		case <-ticker.C:
+			// Maintain target sessions (replace dead ones)
 			current := int(atomic.LoadInt32(&m.activeSessions))
 			if current < m.perf.TargetSessions {
-				m.spawnSessions(ctx, m.perf.TargetSessions-current, tickInterval)
+				m.spawnSessionsImmediate(ctx, m.perf.TargetSessions-current)
 			}
+		}
+	}
+}
+
+// spawnSessionsImmediate spawns sessions without rate limiting.
+// Used when no ramp-up is configured for immediate target achievement.
+func (m *Manager) spawnSessionsImmediate(ctx context.Context, count int) {
+	for i := 0; i < count; i++ {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			go m.launchSession(ctx)
 		}
 	}
 }
