@@ -23,41 +23,19 @@ var Referers = []string{
 	"https://www.microsoft.com/",
 }
 
-// RefSources contains referrer source identifiers for query parameters.
-var RefSources = []string{
-	"google",
-	"naver",
-	"daum",
-	"facebook",
-	"direct",
-	"bing",
-	"yahoo",
-	"twitter",
-}
-
-// UTMSources contains common UTM source values for marketing tracking simulation.
-var UTMSources = []string{
-	"google",
-	"facebook",
-	"newsletter",
-	"direct",
-	"twitter",
-	"naver",
-	"instagram",
-	"linkedin",
-}
-
 // RandomReferer returns a random referrer URL.
 func RandomReferer() string {
 	return Referers[rand.Intn(len(Referers))]
 }
 
-// RandomRefSource returns a random referrer source identifier.
+// RandomRefSource returns a random referrer source identifier for query parameters.
+// Used in ?ref=google style tracking.
 func RandomRefSource() string {
-	return RefSources[rand.Intn(len(RefSources))]
-}
-
-// RandomUTMSource returns a random UTM source.
-func RandomUTMSource() string {
-	return UTMSources[rand.Intn(len(UTMSources))]
+	sources := []string{
+		"google", "facebook", "twitter", "linkedin", "reddit",
+		"bing", "yahoo", "duckduckgo", "instagram", "tiktok",
+		"naver", "daum", "direct", "email", "newsletter",
+		"organic", "referral",
+	}
+	return sources[rand.Intn(len(sources))]
 }

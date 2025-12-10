@@ -151,15 +151,7 @@ func SelectPath(originalPath string, randomizePath bool, probability float32) st
 	return originalPath
 }
 
-// RandomRefSource returns a random referrer source identifier.
-func RandomRefSource() string {
-	sources := []string{
-		"google", "facebook", "twitter", "linkedin", "reddit",
-		"bing", "yahoo", "duckduckgo", "instagram", "tiktok",
-		"direct", "email", "newsletter", "organic", "referral",
-	}
-	return sources[rand.Intn(len(sources))]
-}
+// Note: RandomRefSource is defined in referers.go
 
 // RandomUTMSource returns a random UTM source parameter.
 func RandomUTMSource() string {

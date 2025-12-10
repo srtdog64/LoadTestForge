@@ -1,0 +1,282 @@
+package strategy
+
+import (
+	"fmt"
+	"log"
+	"time"
+
+	"github.com/jdw/loadtestforge/internal/config"
+)
+
+// StrategyFactory creates attack strategies based on configuration.
+type StrategyFactory struct {
+	Config *config.StrategyConfig
+	BindIP string
+}
+
+// NewStrategyFactory creates a new StrategyFactory instance.
+func NewStrategyFactory(cfg *config.StrategyConfig, bindIP string) *StrategyFactory {
+	return &StrategyFactory{
+		Config: cfg,
+		BindIP: bindIP,
+	}
+}
+
+// Create creates an AttackStrategy based on the strategy type.
+func (f *StrategyFactory) Create() AttackStrategy {
+	return f.CreateByType(f.Config.Type)
+}
+
+// CreateByType creates an AttackStrategy for the given type.
+func (f *StrategyFactory) CreateByType(strategyType string) AttackStrategy {
+	switch strategyType {
+	case "slowloris":
+		return NewSlowlorisClassic(f.Config.KeepAliveInterval, f.BindIP)
+
+	case "slowloris-keepalive", "keepsloworis":
+		return NewSlowloris(f.Config.KeepAliveInterval, f.BindIP)
+
+	case "keepalive":
+		return NewKeepAliveHTTP(f.Config.KeepAliveInterval, f.BindIP)
+
+	case "normal":
+		return NewNormalHTTP(f.Config.Timeout, f.BindIP)
+
+	case "slow-post":
+		return NewSlowPost(f.Config.KeepAliveInterval, f.Config.ContentLength, f.BindIP)
+
+	case "slow-read":
+		return NewSlowRead(f.Config.KeepAliveInterval, f.Config.ReadSize, f.Config.WindowSize, f.BindIP)
+
+	case "http-flood":
+		return NewHTTPFlood(
+			f.Config.Timeout,
+			"GET", // Method will be overridden by Target.Method
+			f.Config.PostDataSize,
+			f.Config.RequestsPerConn,
+			f.BindIP,
+			f.Config.EnableStealth,
+			f.Config.RandomizePath,
+		)
+
+	case "h2-flood":
+		return NewH2Flood(f.Config.MaxStreams, f.Config.BurstSize, f.BindIP)
+
+	case "heavy-payload":
+		return NewHeavyPayload(
+			f.Config.Timeout,
+			f.Config.PayloadType,
+			f.Config.PayloadDepth,
+			f.Config.PayloadSize,
+			f.BindIP,
+		)
+
+	case "rudy":
+		rudyCfg := RUDYConfig{
+			ContentLength:         f.Config.ContentLength,
+			ChunkDelayMin:         f.Config.ChunkDelayMin,
+			ChunkDelayMax:         f.Config.ChunkDelayMax,
+			ChunkSizeMin:          f.Config.ChunkSizeMin,
+			ChunkSizeMax:          f.Config.ChunkSizeMax,
+			PersistConnections:    f.Config.PersistConn,
+			MaxRequestsPerSession: f.Config.MaxReqPerSession,
+			KeepAliveTimeout:      f.Config.KeepAliveTimeout,
+			SessionLifetime:       f.Config.SessionLifetime,
+			UseJSON:               f.Config.UseJSON,
+			UseMultipart:          f.Config.UseMultipart,
+			RandomizePath:         f.Config.RandomizePath,
+			EvasionLevel:          f.Config.EvasionLevel,
+			ConnectTimeout:        f.Config.Timeout,
+			SendBufferSize:        f.Config.SendBufferSize,
+		}
+		return NewRUDY(rudyCfg, f.BindIP)
+
+	default:
+		log.Printf("Unknown strategy '%s', using 'keepalive'", strategyType)
+		return NewKeepAliveHTTP(f.Config.KeepAliveInterval, f.BindIP)
+	}
+}
+
+// CreateWithMethod creates an HTTPFlood strategy with a specific HTTP method.
+func (f *StrategyFactory) CreateWithMethod(strategyType, method string) AttackStrategy {
+	if strategyType == "http-flood" {
+		return NewHTTPFlood(
+			f.Config.Timeout,
+			method,
+			f.Config.PostDataSize,
+			f.Config.RequestsPerConn,
+			f.BindIP,
+			f.Config.EnableStealth,
+			f.Config.RandomizePath,
+		)
+	}
+	return f.CreateByType(strategyType)
+}
+
+// AvailableStrategies returns a list of all available strategy types.
+func AvailableStrategies() []StrategyInfo {
+	return []StrategyInfo{
+		{Name: "normal", Description: "Standard HTTP requests with connection per request"},
+		{Name: "keepalive", Description: "HTTP requests with persistent connections (keep-alive)"},
+		{Name: "slowloris", Description: "Classic Slowloris attack - slow header transmission"},
+		{Name: "slowloris-keepalive", Description: "Slowloris with keep-alive packets"},
+		{Name: "slow-post", Description: "Slow POST body transmission (simple RUDY)"},
+		{Name: "slow-read", Description: "Slow response reading attack"},
+		{Name: "http-flood", Description: "High-volume HTTP request flood"},
+		{Name: "h2-flood", Description: "HTTP/2 multiplexed stream flood"},
+		{Name: "heavy-payload", Description: "CPU-intensive payload attacks (JSON/XML/ReDoS)"},
+		{Name: "rudy", Description: "R.U.D.Y. attack - advanced slow POST with evasion"},
+	}
+}
+
+// StrategyInfo provides metadata about a strategy.
+type StrategyInfo struct {
+	Name        string
+	Description string
+}
+
+// ValidateStrategyType checks if the given strategy type is valid.
+func ValidateStrategyType(strategyType string) error {
+	validTypes := map[string]bool{
+		"normal":              true,
+		"keepalive":           true,
+		"slowloris":           true,
+		"slowloris-keepalive": true,
+		"keepsloworis":        true,
+		"slow-post":           true,
+		"slow-read":           true,
+		"http-flood":          true,
+		"h2-flood":            true,
+		"heavy-payload":       true,
+		"rudy":                true,
+	}
+
+	if !validTypes[strategyType] {
+		return fmt.Errorf("unknown strategy type: %s", strategyType)
+	}
+	return nil
+}
+
+// StrategyDefaults returns default configuration values for a specific strategy.
+func StrategyDefaults(strategyType string) map[string]interface{} {
+	defaults := map[string]interface{}{
+		"timeout":           config.DefaultConnectTimeout,
+		"keepalive":         config.DefaultKeepAliveInterval,
+		"content-length":    config.DefaultContentLength,
+		"read-size":         config.DefaultReadSize,
+		"window-size":       config.DefaultWindowSize,
+		"post-size":         config.DefaultPostDataSize,
+		"requests-per-conn": config.DefaultRequestsPerConn,
+	}
+
+	switch strategyType {
+	case "h2-flood":
+		defaults["max-streams"] = config.DefaultMaxStreams
+		defaults["burst-size"] = config.DefaultBurstSize
+
+	case "heavy-payload":
+		defaults["payload-type"] = config.PayloadTypeDeepJSON
+		defaults["payload-depth"] = config.DefaultPayloadDepth
+		defaults["payload-size"] = config.DefaultPayloadSize
+
+	case "rudy":
+		defaults["chunk-delay-min"] = config.DefaultChunkDelayMin
+		defaults["chunk-delay-max"] = config.DefaultChunkDelayMax
+		defaults["chunk-size-min"] = config.DefaultChunkSizeMin
+		defaults["chunk-size-max"] = config.DefaultChunkSizeMax
+		defaults["max-req-per-session"] = config.DefaultMaxReqPerSession
+		defaults["keepalive-timeout"] = config.DefaultKeepAliveTimeout
+		defaults["session-lifetime"] = config.DefaultSessionLifetime
+		defaults["send-buffer"] = config.DefaultSendBufferSize
+		defaults["evasion-level"] = config.EvasionLevelNormal
+
+	case "slow-read":
+		defaults["read-size"] = config.DefaultReadSize
+		defaults["window-size"] = config.DefaultWindowSize
+	}
+
+	return defaults
+}
+
+// IsSlowAttack returns true if the strategy is a slow/low-bandwidth attack.
+func IsSlowAttack(strategyType string) bool {
+	slowAttacks := map[string]bool{
+		"slowloris":           true,
+		"slowloris-keepalive": true,
+		"keepsloworis":        true,
+		"slow-post":           true,
+		"slow-read":           true,
+		"rudy":                true,
+	}
+	return slowAttacks[strategyType]
+}
+
+// IsFloodAttack returns true if the strategy is a high-volume flood attack.
+func IsFloodAttack(strategyType string) bool {
+	floodAttacks := map[string]bool{
+		"http-flood":    true,
+		"h2-flood":      true,
+		"heavy-payload": true,
+	}
+	return floodAttacks[strategyType]
+}
+
+// RecommendedSessions returns recommended session counts for strategy type.
+func RecommendedSessions(strategyType string, baseCount int) (targetSessions, sessionsPerSec int) {
+	if IsSlowAttack(strategyType) {
+		// Slow attacks: more sessions, slower creation rate
+		return baseCount * 2, baseCount / 10
+	}
+	if IsFloodAttack(strategyType) {
+		// Flood attacks: fewer sessions, faster rate
+		return baseCount / 2, baseCount
+	}
+	// Default
+	return baseCount, baseCount / 5
+}
+
+// EstimateResourceUsage estimates resource usage for given configuration.
+func EstimateResourceUsage(strategyType string, sessions int, duration time.Duration) ResourceEstimate {
+	estimate := ResourceEstimate{
+		Strategy:         strategyType,
+		Sessions:         sessions,
+		Duration:         duration,
+		EstimatedConns:   sessions,
+		EstimatedMemMB:   float64(sessions) * 0.1, // ~100KB per session baseline
+		EstimatedBandwidth: "varies",
+	}
+
+	switch strategyType {
+	case "slowloris", "slowloris-keepalive", "slow-post", "slow-read", "rudy":
+		estimate.EstimatedConns = sessions
+		estimate.EstimatedMemMB = float64(sessions) * 0.05 // Low memory per conn
+		estimate.EstimatedBandwidth = "< 1 Mbps"
+
+	case "http-flood":
+		estimate.EstimatedConns = sessions * 10 // High conn turnover
+		estimate.EstimatedMemMB = float64(sessions) * 0.2
+		estimate.EstimatedBandwidth = "10-100 Mbps"
+
+	case "h2-flood":
+		estimate.EstimatedConns = sessions
+		estimate.EstimatedMemMB = float64(sessions) * 0.5 // HTTP/2 overhead
+		estimate.EstimatedBandwidth = "50-500 Mbps"
+
+	case "heavy-payload":
+		estimate.EstimatedConns = sessions
+		estimate.EstimatedMemMB = float64(sessions) * 1.0 // Large payloads
+		estimate.EstimatedBandwidth = "10-50 Mbps"
+	}
+
+	return estimate
+}
+
+// ResourceEstimate provides estimated resource usage.
+type ResourceEstimate struct {
+	Strategy           string
+	Sessions           int
+	Duration           time.Duration
+	EstimatedConns     int
+	EstimatedMemMB     float64
+	EstimatedBandwidth string
+}

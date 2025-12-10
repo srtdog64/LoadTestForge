@@ -169,9 +169,156 @@ delay := netutil.RandomDelay(min, max)
 
 ---
 
+### 7. Strategy Factory 패턴 (`internal/strategy/factory.go`)
+
+전략 생성 로직을 main.go에서 분리하여 Factory 패턴으로 구현했습니다.
+
+**기본 사용법:**
+```go
+factory := strategy.NewStrategyFactory(&cfg.Strategy, bindIP)
+strat := factory.Create()  // 설정된 Type으로 생성
+
+// 또는 특정 타입 지정
+strat := factory.CreateByType("slowloris")
+
+// HTTP method 지정 (http-flood용)
+strat := factory.CreateWithMethod("http-flood", "POST")
+```
+
+**유틸리티 함수:**
+```go
+// 사용 가능한 전략 목록
+strategies := strategy.AvailableStrategies()
+// [{Name: "normal", Description: "Standard HTTP requests..."}, ...]
+
+// 전략 타입 검증
+err := strategy.ValidateStrategyType("slowloris")
+
+// 전략별 기본값 조회
+defaults := strategy.StrategyDefaults("rudy")
+// map[string]interface{}{"chunk-delay-min": 1s, ...}
+
+// 전략 분류
+isSlowAttack := strategy.IsSlowAttack("slowloris")    // true
+isFloodAttack := strategy.IsFloodAttack("http-flood") // true
+
+// 권장 세션 수 계산
+target, rate := strategy.RecommendedSessions("slowloris", 100)
+
+// 리소스 사용량 예측
+estimate := strategy.EstimateResourceUsage("h2-flood", 1000, 60*time.Second)
+```
+
+**main.go 간소화:**
+```go
+// Before (40+ lines)
+func createStrategy(cfg *config.Config) strategy.AttackStrategy {
+    switch cfg.Strategy.Type {
+    case "slowloris":
+        return strategy.NewSlowlorisClassic(...)
+    case "rudy":
+        rudyCfg := strategy.RUDYConfig{...}
+        return strategy.NewRUDY(rudyCfg, ...)
+    // ... 10+ cases
+    }
+}
+
+// After (6 lines)
+func createStrategy(cfg *config.Config) strategy.AttackStrategy {
+    factory := strategy.NewStrategyFactory(&cfg.Strategy, cfg.BindIP)
+    if cfg.Strategy.Type == "http-flood" {
+        return factory.CreateWithMethod("http-flood", cfg.Target.Method)
+    }
+    return factory.Create()
+}
+```
+
+---
+
+### 8. CLI 상수 통합 (`cmd/loadtest/main.go`)
+
+CLI 플래그 기본값을 `config.*` 상수로 교체했습니다.
+
+**변경 전:**
+```go
+flag.IntVar(&cfg.Performance.TargetSessions, "sessions", 100, "...")
+flag.DurationVar(&cfg.Strategy.Timeout, "timeout", 10*time.Second, "...")
+```
+
+**변경 후:**
+```go
+flag.IntVar(&cfg.Performance.TargetSessions, "sessions", config.DefaultTargetSessions, "...")
+flag.DurationVar(&cfg.Strategy.Timeout, "timeout", config.DefaultConnectTimeout, "...")
+```
+
+**적용된 상수:**
+| 플래그 | 상수 |
+|--------|------|
+| `-sessions` | `config.DefaultTargetSessions` |
+| `-rate` | `config.DefaultSessionsPerSec` |
+| `-timeout` | `config.DefaultConnectTimeout` |
+| `-keepalive` | `config.DefaultKeepAliveInterval` |
+| `-content-length` | `config.DefaultContentLength` |
+| `-read-size` | `config.DefaultReadSize` |
+| `-window-size` | `config.DefaultWindowSize` |
+| `-post-size` | `config.DefaultPostDataSize` |
+| `-requests-per-conn` | `config.DefaultRequestsPerConn` |
+| `-max-streams` | `config.DefaultMaxStreams` |
+| `-burst-size` | `config.DefaultBurstSize` |
+| `-payload-depth` | `config.DefaultPayloadDepth` |
+| `-payload-size` | `config.DefaultPayloadSize` |
+| `-chunk-delay-*` | `config.DefaultChunkDelay*` |
+| `-chunk-size-*` | `config.DefaultChunkSize*` |
+| `-max-req-per-session` | `config.DefaultMaxReqPerSession` |
+| `-keepalive-timeout` | `config.DefaultKeepAliveTimeout` |
+| `-session-lifetime` | `config.DefaultSessionLifetime` |
+| `-send-buffer` | `config.DefaultSendBufferSize` |
+| `-evasion-level` | `config.EvasionLevelNormal` |
+| `-max-failures` | `config.DefaultMaxConsecutiveFailures` |
+| `-pulse-high` | `config.DefaultPulseHighTime` |
+| `-pulse-low` | `config.DefaultPulseLowTime` |
+| `-pulse-ratio` | `config.DefaultPulseLowRatio` |
+
+---
+
+### 9. parseBindIPs 개선
+
+IP 파싱 로직을 `strings.FieldsFunc`로 간소화했습니다.
+
+**변경 전:**
+```go
+func parseBindIPs(s string) []string {
+    var ips []string
+    for _, ip := range strings.Split(s, ",") {
+        ip = strings.TrimSpace(ip)
+        if ip != "" {
+            ips = append(ips, ip)
+        }
+    }
+    return ips
+}
+```
+
+**변경 후:**
+```go
+func parseBindIPs(s string) []string {
+    return strings.FieldsFunc(s, func(c rune) bool {
+        return c == ',' || c == ' ' || c == ';'
+    })
+}
+```
+
+**지원 구분자:** `,`, ` ` (공백), `;`
+
+---
+
 ## 파일 구조
 
 ```
+cmd/
+└── loadtest/
+    └── main.go         # [UPDATED] Factory 사용, 상수 적용
+
 internal/
 ├── config/
 │   ├── config.go       # 설정 구조체
@@ -179,6 +326,7 @@ internal/
 ├── strategy/
 │   ├── interface.go    # 인터페이스 정의
 │   ├── base.go         # [NEW] BaseStrategy
+│   ├── factory.go      # [NEW] Strategy Factory
 │   ├── slowloris.go    # [UPDATED] MetricsAware 추가
 │   ├── slowloris_classic.go
 │   ├── slow_post.go
@@ -234,15 +382,9 @@ internal/
 
 ### Phase 2: 구조 개선 (중기)
 
-1. **Strategy Factory 패턴 도입**
-   ```go
-   type StrategyFactory struct {
-       config *config.StrategyConfig
-       bindIP string
-   }
-
-   func (f *StrategyFactory) Create(strategyType string) (AttackStrategy, error)
-   ```
+1. ~~**Strategy Factory 패턴 도입**~~ ✅ 완료
+   - `internal/strategy/factory.go` 구현
+   - `StrategyFactory`, `AvailableStrategies()`, `ValidateStrategyType()` 등
 
 2. **설정 파일 지원**
    - YAML/JSON 설정 파일 로드
@@ -317,4 +459,4 @@ func (s *NewStrategy) Execute(ctx context.Context, target Target) error {
 
 ---
 
-*Last Updated: 2024-12*
+*Last Updated: 2025-12*

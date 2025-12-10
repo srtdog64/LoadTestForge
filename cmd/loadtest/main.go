@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -114,54 +115,63 @@ func main() {
 func parseFlags() *config.Config {
 	cfg := config.DefaultConfig()
 
+	// Target settings
 	flag.StringVar(&cfg.Target.URL, "target", "", "Target URL (required)")
 	flag.StringVar(&cfg.Target.Method, "method", "GET", "HTTP method")
 	flag.StringVar(&cfg.Strategy.Type, "strategy", "keepalive", "Attack strategy (normal|keepalive|slowloris|slowloris-keepalive|slow-post|slow-read|http-flood|h2-flood|heavy-payload|rudy)")
 	flag.StringVar(&cfg.BindIP, "bind-ip", "", "Source IP address(es) to bind, comma-separated for multiple (e.g., 192.168.1.100,192.168.1.101)")
-	flag.IntVar(&cfg.Performance.TargetSessions, "sessions", 100, "Target concurrent sessions")
-	flag.IntVar(&cfg.Performance.SessionsPerSec, "rate", 10, "Sessions per second")
+
+	// Performance settings
+	flag.IntVar(&cfg.Performance.TargetSessions, "sessions", config.DefaultTargetSessions, "Target concurrent sessions")
+	flag.IntVar(&cfg.Performance.SessionsPerSec, "rate", config.DefaultSessionsPerSec, "Sessions per second")
 	flag.DurationVar(&cfg.Performance.Duration, "duration", 0, "Test duration (0 = infinite)")
 	flag.DurationVar(&cfg.Performance.RampUpDuration, "rampup", 0, "Ramp-up duration (e.g., 30s, 2m)")
-	flag.DurationVar(&cfg.Strategy.Timeout, "timeout", 10*time.Second, "Request timeout")
-	flag.DurationVar(&cfg.Strategy.KeepAliveInterval, "keepalive", 10*time.Second, "Keep-alive ping interval")
-	flag.IntVar(&cfg.Strategy.ContentLength, "content-length", 100000, "Content-Length for slow-post")
-	flag.IntVar(&cfg.Strategy.ReadSize, "read-size", 1, "Bytes to read per iteration for slow-read")
-	flag.IntVar(&cfg.Strategy.WindowSize, "window-size", 64, "TCP window size for slow-read")
-	flag.IntVar(&cfg.Strategy.PostDataSize, "post-size", 1024, "POST data size for http-flood")
-	flag.IntVar(&cfg.Strategy.RequestsPerConn, "requests-per-conn", 100, "Requests per connection for http-flood")
+
+	// Connection settings
+	flag.DurationVar(&cfg.Strategy.Timeout, "timeout", config.DefaultConnectTimeout, "Request timeout")
+	flag.DurationVar(&cfg.Strategy.KeepAliveInterval, "keepalive", config.DefaultKeepAliveInterval, "Keep-alive ping interval")
+
+	// Slow attack settings
+	flag.IntVar(&cfg.Strategy.ContentLength, "content-length", config.DefaultContentLength, "Content-Length for slow-post")
+	flag.IntVar(&cfg.Strategy.ReadSize, "read-size", config.DefaultReadSize, "Bytes to read per iteration for slow-read")
+	flag.IntVar(&cfg.Strategy.WindowSize, "window-size", config.DefaultWindowSize, "TCP window size for slow-read")
+
+	// HTTP Flood settings
+	flag.IntVar(&cfg.Strategy.PostDataSize, "post-size", config.DefaultPostDataSize, "POST data size for http-flood")
+	flag.IntVar(&cfg.Strategy.RequestsPerConn, "requests-per-conn", config.DefaultRequestsPerConn, "Requests per connection for http-flood")
 
 	// H2 Flood settings
-	flag.IntVar(&cfg.Strategy.MaxStreams, "max-streams", 100, "Max concurrent streams per connection for h2-flood")
-	flag.IntVar(&cfg.Strategy.BurstSize, "burst-size", 10, "Stream burst size for h2-flood")
+	flag.IntVar(&cfg.Strategy.MaxStreams, "max-streams", config.DefaultMaxStreams, "Max concurrent streams per connection for h2-flood")
+	flag.IntVar(&cfg.Strategy.BurstSize, "burst-size", config.DefaultBurstSize, "Stream burst size for h2-flood")
 
 	// Heavy Payload settings
-	flag.StringVar(&cfg.Strategy.PayloadType, "payload-type", "deep-json", "Payload type for heavy-payload (deep-json|redos|nested-xml|query-flood|multipart)")
-	flag.IntVar(&cfg.Strategy.PayloadDepth, "payload-depth", 50, "Nesting depth for heavy-payload")
-	flag.IntVar(&cfg.Strategy.PayloadSize, "payload-size", 10000, "Payload size for heavy-payload")
+	flag.StringVar(&cfg.Strategy.PayloadType, "payload-type", config.PayloadTypeDeepJSON, "Payload type for heavy-payload (deep-json|redos|nested-xml|query-flood|multipart)")
+	flag.IntVar(&cfg.Strategy.PayloadDepth, "payload-depth", config.DefaultPayloadDepth, "Nesting depth for heavy-payload")
+	flag.IntVar(&cfg.Strategy.PayloadSize, "payload-size", config.DefaultPayloadSize, "Payload size for heavy-payload")
 
 	// RUDY settings
-	flag.DurationVar(&cfg.Strategy.ChunkDelayMin, "chunk-delay-min", 1*time.Second, "Minimum delay between chunks for rudy")
-	flag.DurationVar(&cfg.Strategy.ChunkDelayMax, "chunk-delay-max", 5*time.Second, "Maximum delay between chunks for rudy")
-	flag.IntVar(&cfg.Strategy.ChunkSizeMin, "chunk-size-min", 1, "Minimum chunk size in bytes for rudy")
-	flag.IntVar(&cfg.Strategy.ChunkSizeMax, "chunk-size-max", 100, "Maximum chunk size in bytes for rudy")
+	flag.DurationVar(&cfg.Strategy.ChunkDelayMin, "chunk-delay-min", config.DefaultChunkDelayMin, "Minimum delay between chunks for rudy")
+	flag.DurationVar(&cfg.Strategy.ChunkDelayMax, "chunk-delay-max", config.DefaultChunkDelayMax, "Maximum delay between chunks for rudy")
+	flag.IntVar(&cfg.Strategy.ChunkSizeMin, "chunk-size-min", config.DefaultChunkSizeMin, "Minimum chunk size in bytes for rudy")
+	flag.IntVar(&cfg.Strategy.ChunkSizeMax, "chunk-size-max", config.DefaultChunkSizeMax, "Maximum chunk size in bytes for rudy")
 	flag.BoolVar(&cfg.Strategy.PersistConn, "persist", true, "Enable persistent connections for rudy")
-	flag.IntVar(&cfg.Strategy.MaxReqPerSession, "max-req-per-session", 10, "Maximum requests per session for rudy")
-	flag.DurationVar(&cfg.Strategy.KeepAliveTimeout, "keepalive-timeout", 600*time.Second, "Keep-alive timeout for rudy")
+	flag.IntVar(&cfg.Strategy.MaxReqPerSession, "max-req-per-session", config.DefaultMaxReqPerSession, "Maximum requests per session for rudy")
+	flag.DurationVar(&cfg.Strategy.KeepAliveTimeout, "keepalive-timeout", config.DefaultKeepAliveTimeout, "Keep-alive timeout for rudy")
 	flag.BoolVar(&cfg.Strategy.UseJSON, "use-json", false, "Use JSON encoding for rudy")
 	flag.BoolVar(&cfg.Strategy.UseMultipart, "use-multipart", false, "Use multipart/form-data encoding for rudy")
-	flag.IntVar(&cfg.Strategy.EvasionLevel, "evasion-level", 2, "Evasion level for rudy (1=basic, 2=normal, 3=aggressive)")
-	flag.DurationVar(&cfg.Strategy.SessionLifetime, "session-lifetime", 3600*time.Second, "Session lifetime for rudy")
-	flag.IntVar(&cfg.Strategy.SendBufferSize, "send-buffer", 1024, "TCP send buffer size for rudy (small = slower)")
+	flag.IntVar(&cfg.Strategy.EvasionLevel, "evasion-level", config.EvasionLevelNormal, "Evasion level for rudy (1=basic, 2=normal, 3=aggressive)")
+	flag.DurationVar(&cfg.Strategy.SessionLifetime, "session-lifetime", config.DefaultSessionLifetime, "Session lifetime for rudy")
+	flag.IntVar(&cfg.Strategy.SendBufferSize, "send-buffer", config.DefaultSendBufferSize, "TCP send buffer size for rudy (small = slower)")
 
 	// Session failure settings
-	flag.IntVar(&cfg.Performance.MaxConsecutiveFailures, "max-failures", 5, "Max consecutive failures before session terminates")
+	flag.IntVar(&cfg.Performance.MaxConsecutiveFailures, "max-failures", config.DefaultMaxConsecutiveFailures, "Max consecutive failures before session terminates")
 
 	// Pulse settings
 	flag.BoolVar(&cfg.Performance.Pulse.Enabled, "pulse", false, "Enable pulsing load pattern")
-	flag.DurationVar(&cfg.Performance.Pulse.HighTime, "pulse-high", 30*time.Second, "Duration of high load phase")
-	flag.DurationVar(&cfg.Performance.Pulse.LowTime, "pulse-low", 30*time.Second, "Duration of low load phase")
-	flag.Float64Var(&cfg.Performance.Pulse.LowRatio, "pulse-ratio", 0.1, "Session ratio during low phase (0.1 = 10%)")
-	flag.StringVar(&cfg.Performance.Pulse.WaveType, "pulse-wave", "square", "Wave type (square|sine|sawtooth)")
+	flag.DurationVar(&cfg.Performance.Pulse.HighTime, "pulse-high", config.DefaultPulseHighTime, "Duration of high load phase")
+	flag.DurationVar(&cfg.Performance.Pulse.LowTime, "pulse-low", config.DefaultPulseLowTime, "Duration of low load phase")
+	flag.Float64Var(&cfg.Performance.Pulse.LowRatio, "pulse-ratio", config.DefaultPulseLowRatio, "Session ratio during low phase (0.1 = 10%)")
+	flag.StringVar(&cfg.Performance.Pulse.WaveType, "pulse-wave", config.WaveTypeSquare, "Wave type (square|sine|sawtooth)")
 
 	// Advanced options
 	flag.BoolVar(&cfg.Strategy.EnableStealth, "stealth", false, "Enable browser fingerprint headers (Sec-Fetch-*) for WAF bypass")
@@ -215,69 +225,19 @@ func validateConfig(cfg *config.Config) error {
 }
 
 func createStrategy(cfg *config.Config) strategy.AttackStrategy {
-	switch cfg.Strategy.Type {
-	case "slowloris":
-		return strategy.NewSlowlorisClassic(cfg.Strategy.KeepAliveInterval, cfg.BindIP)
-	case "slowloris-keepalive", "keepsloworis":
-		return strategy.NewSlowloris(cfg.Strategy.KeepAliveInterval, cfg.BindIP)
-	case "keepalive":
-		return strategy.NewKeepAliveHTTP(cfg.Strategy.KeepAliveInterval, cfg.BindIP)
-	case "normal":
-		return strategy.NewNormalHTTP(cfg.Strategy.Timeout, cfg.BindIP)
-	case "slow-post":
-		return strategy.NewSlowPost(cfg.Strategy.KeepAliveInterval, cfg.Strategy.ContentLength, cfg.BindIP)
-	case "slow-read":
-		return strategy.NewSlowRead(cfg.Strategy.KeepAliveInterval, cfg.Strategy.ReadSize, cfg.Strategy.WindowSize, cfg.BindIP)
-	case "http-flood":
-		return strategy.NewHTTPFlood(cfg.Strategy.Timeout, cfg.Target.Method, cfg.Strategy.PostDataSize, cfg.Strategy.RequestsPerConn, cfg.BindIP, cfg.Strategy.EnableStealth, cfg.Strategy.RandomizePath)
-	case "h2-flood":
-		return strategy.NewH2Flood(cfg.Strategy.MaxStreams, cfg.Strategy.BurstSize, cfg.BindIP)
-	case "heavy-payload":
-		return strategy.NewHeavyPayload(cfg.Strategy.Timeout, cfg.Strategy.PayloadType, cfg.Strategy.PayloadDepth, cfg.Strategy.PayloadSize, cfg.BindIP)
-	case "rudy":
-		rudyCfg := strategy.RUDYConfig{
-			ContentLength:         cfg.Strategy.ContentLength,
-			ChunkDelayMin:         cfg.Strategy.ChunkDelayMin,
-			ChunkDelayMax:         cfg.Strategy.ChunkDelayMax,
-			ChunkSizeMin:          cfg.Strategy.ChunkSizeMin,
-			ChunkSizeMax:          cfg.Strategy.ChunkSizeMax,
-			PersistConnections:    cfg.Strategy.PersistConn,
-			MaxRequestsPerSession: cfg.Strategy.MaxReqPerSession,
-			KeepAliveTimeout:      cfg.Strategy.KeepAliveTimeout,
-			SessionLifetime:       cfg.Strategy.SessionLifetime,
-			UseJSON:               cfg.Strategy.UseJSON,
-			UseMultipart:          cfg.Strategy.UseMultipart,
-			RandomizePath:         cfg.Strategy.RandomizePath,
-			EvasionLevel:          cfg.Strategy.EvasionLevel,
-			ConnectTimeout:        cfg.Strategy.Timeout,
-			SendBufferSize:        cfg.Strategy.SendBufferSize,
-		}
-		return strategy.NewRUDY(rudyCfg, cfg.BindIP)
-	default:
-		log.Printf("Unknown strategy '%s', using 'keepalive'", cfg.Strategy.Type)
-		return strategy.NewKeepAliveHTTP(cfg.Strategy.KeepAliveInterval, cfg.BindIP)
+	factory := strategy.NewStrategyFactory(&cfg.Strategy, cfg.BindIP)
+
+	// Special handling for http-flood to pass target method
+	if cfg.Strategy.Type == "http-flood" {
+		return factory.CreateWithMethod("http-flood", cfg.Target.Method)
 	}
+
+	return factory.Create()
 }
 
 // parseBindIPs parses comma/space/semicolon separated IP list.
 func parseBindIPs(s string) []string {
-	var result []string
-	var current string
-
-	for _, c := range s {
-		if c == ',' || c == ' ' || c == ';' {
-			if current != "" {
-				result = append(result, current)
-				current = ""
-			}
-		} else {
-			current += string(c)
-		}
-	}
-
-	if current != "" {
-		result = append(result, current)
-	}
-
-	return result
+	return strings.FieldsFunc(s, func(c rune) bool {
+		return c == ',' || c == ' ' || c == ';'
+	})
 }

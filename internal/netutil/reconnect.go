@@ -5,6 +5,8 @@ import (
 	"math/rand"
 	"sync/atomic"
 	"time"
+
+	"github.com/jdw/loadtestforge/internal/httpdata"
 )
 
 // ReconnectConfig defines reconnection behavior parameters.
@@ -138,7 +140,7 @@ type SessionPersistence struct {
 func NewSessionPersistence(maxRequests int) *SessionPersistence {
 	now := time.Now()
 	return &SessionPersistence{
-		SessionID:    GenerateSessionID(),
+		SessionID:    httpdata.GenerateSessionID(),
 		Cookies:      make([]string, 0, 4),
 		RequestCount: 0,
 		MaxRequests:  maxRequests,
@@ -147,15 +149,7 @@ func NewSessionPersistence(maxRequests int) *SessionPersistence {
 	}
 }
 
-// GenerateSessionID creates a random 16-character session ID.
-func GenerateSessionID() string {
-	chars := "abcdefghijklmnopqrstuvwxyz0123456789"
-	result := make([]byte, 16)
-	for i := range result {
-		result[i] = chars[rand.Intn(len(chars))]
-	}
-	return string(result)
-}
+// Note: GenerateSessionID is defined in httpdata/headers.go
 
 // IncrementRequests increments the request count and updates last activity.
 // Returns true if session should be renewed.
@@ -177,7 +171,7 @@ func (s *SessionPersistence) AddCookie(cookie string) {
 
 // Reset resets the session for reuse with a new ID.
 func (s *SessionPersistence) Reset() {
-	s.SessionID = GenerateSessionID()
+	s.SessionID = httpdata.GenerateSessionID()
 	s.Cookies = s.Cookies[:0]
 	s.RequestCount = 0
 	s.CreatedAt = time.Now()
