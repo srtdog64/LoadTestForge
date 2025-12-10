@@ -52,4 +52,12 @@ func RandomReferer() string {
 	return Referers[rand.Intn(len(Referers))]
 }
 
-// Removed RandomRefSource and RandomUTMSource as they are already defined in path.go
+// RandomRefSource returns a random referrer source identifier.
+func RandomRefSource() string {
+	return RefSources[rand.Intn(len(RefSources))]
+}
+
+// RandomUTMSource returns a random UTM source.
+func RandomUTMSource() string {
+	return UTMSources[rand.Intn(len(UTMSources))]
+}
