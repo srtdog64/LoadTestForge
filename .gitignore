@@ -1,5 +1,4 @@
 # Binaries
-loadtest
 *.exe
 *.dll
 *.so
