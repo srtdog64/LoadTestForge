@@ -463,10 +463,27 @@ ip addr show
   --bind-ip 192.168.1.101
 ```
 
-**3. Multi-IP Manual Distribution:**
+**3. Multi-IP with Single Command (Recommended):**
 
 ```bash
-# Launch separate processes for each NIC
+# Comma-separated IPs - automatic round-robin distribution
+./loadtest \
+  --target http://example.com \
+  --sessions 14000 \
+  --rate 2000 \
+  --bind-ip "192.168.1.101,192.168.1.102,192.168.1.103,192.168.1.104"
+
+# Space or semicolon separated also works
+./loadtest --bind-ip "192.168.1.101 192.168.1.102 192.168.1.103"
+./loadtest --bind-ip "192.168.1.101;192.168.1.102;192.168.1.103"
+```
+
+This built-in feature automatically distributes connections across all specified IPs using round-robin. No need to run multiple processes!
+
+**4. Multi-IP Manual Distribution (Legacy):**
+
+```bash
+# Launch separate processes for each NIC (old method)
 ./loadtest --target http://example.com --sessions 2000 --bind-ip 192.168.1.101 &
 ./loadtest --target http://example.com --sessions 2000 --bind-ip 192.168.1.102 &
 ./loadtest --target http://example.com --sessions 2000 --bind-ip 192.168.1.103 &
@@ -479,7 +496,7 @@ ip addr show
 watch -n 1 'ps aux | grep loadtest | wc -l'
 ```
 
-**4. Automated Multi-IP Script:**
+**5. Automated Multi-IP Script (Legacy):**
 
 ```bash
 #!/bin/bash
