@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
 	"log"
 	"net"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -23,6 +25,12 @@ func main() {
 
 	if err := validateConfig(cfg); err != nil {
 		log.Fatalf("Invalid configuration: %v", err)
+	}
+
+	// Safety check for public IP targets
+	if !confirmPublicTarget(cfg.Target.URL) {
+		fmt.Println("Test cancelled by user.")
+		os.Exit(0)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -244,4 +252,103 @@ func parseBindIPs(s string) []string {
 	return strings.FieldsFunc(s, func(c rune) bool {
 		return c == ',' || c == ' ' || c == ';'
 	})
+}
+
+// confirmPublicTarget checks if the target is a public IP and asks for user confirmation.
+// Returns true if the test should proceed, false if cancelled.
+func confirmPublicTarget(targetURL string) bool {
+	parsed, err := url.Parse(targetURL)
+	if err != nil {
+		return true // Let validation handle invalid URLs
+	}
+
+	host := parsed.Hostname()
+
+	// Check if it's localhost
+	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		return true
+	}
+
+	// Resolve hostname to IP
+	ip := net.ParseIP(host)
+	if ip == nil {
+		// It's a hostname, try to resolve
+		ips, err := net.LookupIP(host)
+		if err != nil || len(ips) == 0 {
+			// Can't resolve, show warning anyway
+			return promptUserConfirmation(host, "unresolved hostname")
+		}
+		ip = ips[0]
+	}
+
+	// Check if it's a private IP
+	if isPrivateIP(ip) {
+		return true
+	}
+
+	// It's a public IP - require confirmation
+	return promptUserConfirmation(host, ip.String())
+}
+
+// isPrivateIP checks if an IP address is in private/reserved ranges.
+func isPrivateIP(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+
+	// Check for loopback
+	if ip.IsLoopback() {
+		return true
+	}
+
+	// Check for private ranges
+	privateRanges := []string{
+		"10.0.0.0/8",     // Class A private
+		"172.16.0.0/12",  // Class B private
+		"192.168.0.0/16", // Class C private
+		"169.254.0.0/16", // Link-local
+		"fc00::/7",       // IPv6 unique local
+		"fe80::/10",      // IPv6 link-local
+	}
+
+	for _, cidr := range privateRanges {
+		_, network, err := net.ParseCIDR(cidr)
+		if err != nil {
+			continue
+		}
+		if network.Contains(ip) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// promptUserConfirmation asks the user to confirm testing against a public target.
+func promptUserConfirmation(host, resolvedIP string) bool {
+	fmt.Println()
+	fmt.Println("╔══════════════════════════════════════════════════════════════════╗")
+	fmt.Println("║                    ⚠️  PUBLIC TARGET WARNING ⚠️                    ║")
+	fmt.Println("╠══════════════════════════════════════════════════════════════════╣")
+	fmt.Printf("║  Target: %-56s ║\n", host)
+	fmt.Printf("║  Resolved IP: %-51s ║\n", resolvedIP)
+	fmt.Println("╠══════════════════════════════════════════════════════════════════╣")
+	fmt.Println("║  This appears to be a PUBLIC IP address.                         ║")
+	fmt.Println("║                                                                  ║")
+	fmt.Println("║  LEGAL REMINDER:                                                 ║")
+	fmt.Println("║  - You MUST have written authorization to test this target       ║")
+	fmt.Println("║  - Unauthorized testing is ILLEGAL in most jurisdictions         ║")
+	fmt.Println("║  - You are fully responsible for your actions                    ║")
+	fmt.Println("╚══════════════════════════════════════════════════════════════════╝")
+	fmt.Println()
+	fmt.Print("Do you have authorization to test this target? [y/N]: ")
+
+	reader := bufio.NewReader(os.Stdin)
+	response, err := reader.ReadString('\n')
+	if err != nil {
+		return false
+	}
+
+	response = strings.TrimSpace(strings.ToLower(response))
+	return response == "y" || response == "yes"
 }

@@ -1,22 +1,40 @@
 # LoadTestForge
 
-High-performance load testing tool with Slowloris attack support and advanced metrics.
+A personal toy project for learning about HTTP load testing and network stress patterns. Built for educational purposes and authorized testing only.
+
+> **IMPORTANT LEGAL DISCLAIMER**
+>
+> This tool is designed exclusively for **authorized security testing** and **performance validation** of systems you own or have explicit written permission to test.
+>
+> **Unauthorized use against systems without permission is illegal and may violate:**
+> - Computer Fraud and Abuse Act (CFAA) - United States
+> - Computer Misuse Act - United Kingdom
+> - 정보통신망법 - South Korea
+> - Similar laws in other jurisdictions
+>
+> **The developers assume no liability for misuse of this software. By using this tool, you acknowledge that you have obtained proper authorization and accept full responsibility for your actions.**
+
+## Use Cases
+
+- **Learning**: Understand how various HTTP stress patterns work
+- **Personal Lab Testing**: Test your own servers and infrastructure
+- **Security Research**: Study DDoS mitigation techniques (on your own systems)
+- **CTF/Educational**: Capture the flag competitions and security courses
 
 ## Features
 
-- **Multiple Attack Strategies**
+- **Multiple Load Patterns**
   - Normal HTTP load testing
   - Keep-Alive HTTP with connection reuse
-  - Classic Slowloris (incomplete headers, bypass DDoS protection)
-  - Keep-Alive Slowloris (complete headers, safer testing)
-  - Slow POST (RUDY - large Content-Length, slow body transmission)
-  - Slow Read (slow response consumption, TCP window manipulation)
-  - HTTP Flood (high-volume request flooding)
-  - HTTP/2 Flood (multiplexing abuse, stream flooding)
-  - Heavy Payload (ReDoS, deep JSON/XML parsing stress)
-  - TCP Flood (connection exhaustion, hold until server closes)
-  - RUDY (R-U-Dead-Yet advanced slow POST with session persistence)
-  - HTTPS/TLS support with proper certificate validation
+  - Slow Connection Simulation (validates timeout policies)
+  - Slow POST Simulation (tests request body handling)
+  - Slow Read Simulation (validates response buffering)
+  - High Throughput Testing (maximum request volume)
+  - HTTP/2 Multiplexing Test (stream concurrency validation)
+  - Parser Stress Testing (JSON/XML depth limits, regex performance)
+  - Connection Pool Testing (socket limit validation)
+  - Session Persistence Testing (cookie handling, keep-alive)
+  - HTTPS/TLS support with certificate validation
 
 - **Pulsing Load Patterns**
   - Square wave (instant transition between high/low load)
@@ -41,9 +59,9 @@ High-performance load testing tool with Slowloris attack support and advanced me
 
 - **Multi-IP Source Binding**
   - Bind outbound connections to specific network interfaces
-  - Bypass single-IP rate limits on target servers
   - Distribute load across multiple NICs or IP addresses
-  - Essential for overcoming DDoS protection thresholds
+  - Simulate traffic from multiple client sources
+  - Essential for realistic distributed load simulation
 
 - **Production Ready**
   - Session lifetime limits (5min max)
@@ -137,21 +155,21 @@ make build
 | `--use-multipart` | `false` | Use multipart/form-data encoding for rudy |
 | `--evasion-level` | `2` | Evasion level for rudy (1=basic, 2=normal, 3=aggressive) |
 
-### Available Strategies
+### Available Load Patterns
 
-| Strategy | Description |
-|----------|-------------|
-| `normal` | Standard HTTP requests |
-| `keepalive` | HTTP with connection reuse (default) |
-| `slowloris` | Classic Slowloris (incomplete headers) |
-| `slowloris-keepalive` | Slowloris with complete headers |
-| `slow-post` | Slow POST body transmission |
-| `slow-read` | Slow response reading |
-| `http-flood` | High-volume request flooding |
-| `h2-flood` | HTTP/2 multiplexing flood |
-| `heavy-payload` | Application-layer stress with heavy payloads |
-| `rudy` | R-U-Dead-Yet slow POST with session persistence |
-| `tcp-flood` | TCP connection exhaustion (hold until server closes) |
+| Pattern | Description | Use Case |
+|---------|-------------|----------|
+| `normal` | Standard HTTP requests | Baseline throughput testing |
+| `keepalive` | HTTP with connection reuse (default) | Realistic browser traffic simulation |
+| `slowloris` | Slow connection simulation | Timeout policy validation |
+| `slowloris-keepalive` | Slow connection with keep-alive | Connection pool stress testing |
+| `slow-post` | Slow POST body transmission | Request timeout validation |
+| `slow-read` | Slow response consumption | Response buffer limit testing |
+| `http-flood` | High throughput testing | Maximum capacity validation |
+| `h2-flood` | HTTP/2 stream concurrency test | HTTP/2 limit validation |
+| `heavy-payload` | Parser stress testing | Input validation & parser limits |
+| `rudy` | Persistent slow POST simulation | Session handling validation |
+| `tcp-flood` | Connection pool exhaustion test | Socket limit validation |
 
 ## Examples
 
@@ -1317,15 +1335,54 @@ make fmt
 
 MIT License
 
-## Legal Notice
+## Legal Notice & Responsible Use
 
-This tool is for authorized load testing only. Unauthorized use against systems you do not own or have permission to test is illegal.
+### Authorized Use Only
 
-Always:
-- Get written permission
-- Notify stakeholders
-- Understand local laws
-- Test in staging first
+This tool is designed for **legitimate security testing and performance validation**. You MUST have explicit authorization before testing any system.
+
+### Required Before Testing
+
+| Requirement | Description |
+|-------------|-------------|
+| **Written Authorization** | Obtain documented permission from system owner |
+| **Scope Definition** | Clearly define target systems, timeframes, and test limits |
+| **Stakeholder Notification** | Inform IT, security, and operations teams |
+| **Staging First** | Always validate in non-production environments first |
+| **Incident Response Plan** | Have rollback and emergency contact procedures ready |
+
+### Prohibited Use
+
+- Testing systems without explicit authorization
+- Targeting third-party infrastructure (CDNs, cloud providers) without permission
+- Disrupting production services without proper change management
+- Using this tool for malicious purposes or competitive harm
+
+### Compliance
+
+Users are responsible for compliance with:
+- Local computer crime laws (CFAA, Computer Misuse Act, 정보통신망법, etc.)
+- Industry regulations (PCI-DSS, HIPAA, SOC2 testing requirements)
+- Cloud provider acceptable use policies (AWS, GCP, Azure)
+- Corporate security policies
+
+### Liability
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. THE AUTHORS AND COPYRIGHT HOLDERS SHALL NOT BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM THE USE OF THIS SOFTWARE. Users assume full responsibility for ensuring authorized and legal use.
+
+## Defensive Recommendations
+
+If you're testing your own infrastructure, here are recommended mitigations for each load pattern:
+
+| Pattern | Mitigation |
+|---------|------------|
+| Slow Connection | Configure aggressive connection timeouts (30-60s) |
+| Slow POST | Implement request body timeouts |
+| Slow Read | Set response send timeouts |
+| High Throughput | Rate limiting, WAF rules, CDN |
+| HTTP/2 Streams | Configure MAX_CONCURRENT_STREAMS limits |
+| Parser Stress | Input validation, depth limits, regex timeout |
+| Connection Pool | Connection limits per IP, firewall rules |
 
 ## Contributing
 
