@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jdw/loadtestforge/internal/config"
 	"github.com/jdw/loadtestforge/internal/httpdata"
 	"github.com/jdw/loadtestforge/internal/netutil"
 )
@@ -20,28 +21,30 @@ import (
 // HTTPFlood implements high-volume HTTP request flooding.
 // It sends as many HTTP requests as possible to overwhelm the target server.
 type HTTPFlood struct {
-	client            *http.Client
-	timeout           time.Duration
-	method            string
-	postDataSize      int
-	requestsPerConn   int
-	activeConnections int64
-	requestsSent      int64
-	cookiePool        []string
-	enableStealth     bool
-	randomizePath     bool
-	metricsCallback   MetricsCallback
+	BaseStrategy
+	client          *http.Client
+	timeout         time.Duration
+	method          string
+	postDataSize    int
+	requestsPerConn int
+	requestsSent    int64
+	cookiePool      []string
 }
 
+// NewHTTPFlood creates a new HTTPFlood strategy.
 func NewHTTPFlood(timeout time.Duration, method string, postDataSize int, requestsPerConn int, bindIP string, enableStealth bool, randomizePath bool) *HTTPFlood {
+	common := DefaultCommonConfig()
+	common.ConnectTimeout = timeout
+	common.EnableStealth = enableStealth
+	common.RandomizePath = randomizePath
+
 	h := &HTTPFlood{
+		BaseStrategy:    NewBaseStrategy(bindIP, common),
 		timeout:         timeout,
 		method:          method,
 		postDataSize:    postDataSize,
 		requestsPerConn: requestsPerConn,
 		cookiePool:      generateCookiePool(50),
-		enableStealth:   enableStealth,
-		randomizePath:   randomizePath,
 	}
 
 	dialerCfg := netutil.DialerConfig{
@@ -60,6 +63,19 @@ func NewHTTPFlood(timeout time.Duration, method string, postDataSize int, reques
 	}
 
 	return h
+}
+
+// NewHTTPFloodWithConfig creates an HTTPFlood strategy from StrategyConfig.
+func NewHTTPFloodWithConfig(cfg *config.StrategyConfig, bindIP string, method string) *HTTPFlood {
+	return NewHTTPFlood(
+		cfg.Timeout,
+		method,
+		cfg.PostDataSize,
+		cfg.RequestsPerConn,
+		bindIP,
+		cfg.EnableStealth,
+		cfg.RandomizePath,
+	)
 }
 
 // generateCookiePool creates a pool of realistic session cookies
@@ -104,7 +120,7 @@ func (h *HTTPFlood) sendRequest(ctx context.Context, target Target, parsedURL *u
 	}
 
 	var targetURL string
-	if h.randomizePath {
+	if h.IsPathRandomized() {
 		targetURL = h.generateRealisticURL(parsedURL)
 	} else {
 		targetURL = fmt.Sprintf("%s?r=%d&cb=%d", target.URL, rand.Intn(100000000), rand.Intn(1000000))
@@ -117,7 +133,7 @@ func (h *HTTPFlood) sendRequest(ctx context.Context, target Target, parsedURL *u
 
 	h.applyRandomHeaders(req)
 
-	if h.enableStealth {
+	if h.IsStealthEnabled() {
 		h.applyStealthHeaders(req)
 	}
 
@@ -146,9 +162,7 @@ func (h *HTTPFlood) sendRequest(ctx context.Context, target Target, parsedURL *u
 		return fmt.Errorf("http error: %d", resp.StatusCode)
 	}
 
-	if h.metricsCallback != nil {
-		h.metricsCallback.RecordSuccessWithLatency(latency)
-	}
+	h.RecordLatency(latency)
 
 	return nil
 }
@@ -254,14 +268,6 @@ func (h *HTTPFlood) Name() string {
 	return "http-flood"
 }
 
-func (h *HTTPFlood) ActiveConnections() int64 {
-	return atomic.LoadInt64(&h.activeConnections)
-}
-
 func (h *HTTPFlood) RequestsSent() int64 {
 	return atomic.LoadInt64(&h.requestsSent)
-}
-
-func (h *HTTPFlood) SetMetricsCallback(callback MetricsCallback) {
-	h.metricsCallback = callback
 }

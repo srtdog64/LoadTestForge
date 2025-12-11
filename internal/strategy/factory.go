@@ -31,33 +31,25 @@ func (f *StrategyFactory) Create() AttackStrategy {
 func (f *StrategyFactory) CreateByType(strategyType string) AttackStrategy {
 	switch strategyType {
 	case "slowloris":
-		return NewSlowlorisClassic(f.Config.KeepAliveInterval, f.BindIP)
+		return NewSlowlorisClassicWithConfig(f.Config, f.BindIP)
 
 	case "slowloris-keepalive", "keepsloworis":
-		return NewSlowloris(f.Config.KeepAliveInterval, f.BindIP)
+		return NewSlowlorisWithConfig(f.Config, f.BindIP)
 
 	case "keepalive":
-		return NewKeepAliveHTTP(f.Config.KeepAliveInterval, f.BindIP)
+		return NewKeepAliveHTTPWithConfig(f.Config, f.BindIP)
 
 	case "normal":
-		return NewNormalHTTP(f.Config.Timeout, f.BindIP)
+		return NewNormalHTTPWithConfig(f.Config, f.BindIP)
 
 	case "slow-post":
-		return NewSlowPost(f.Config.KeepAliveInterval, f.Config.ContentLength, f.BindIP)
+		return NewSlowPostWithConfig(f.Config, f.BindIP)
 
 	case "slow-read":
-		return NewSlowRead(f.Config.KeepAliveInterval, f.Config.ReadSize, f.Config.WindowSize, f.BindIP)
+		return NewSlowReadWithConfig(f.Config, f.BindIP)
 
 	case "http-flood":
-		return NewHTTPFlood(
-			f.Config.Timeout,
-			"GET", // Method will be overridden by Target.Method
-			f.Config.PostDataSize,
-			f.Config.RequestsPerConn,
-			f.BindIP,
-			f.Config.EnableStealth,
-			f.Config.RandomizePath,
-		)
+		return NewHTTPFloodWithConfig(f.Config, f.BindIP, "GET")
 
 	case "h2-flood":
 		return NewH2Flood(f.Config.MaxStreams, f.Config.BurstSize, f.BindIP)
@@ -92,32 +84,18 @@ func (f *StrategyFactory) CreateByType(strategyType string) AttackStrategy {
 		return NewRUDY(rudyCfg, f.BindIP)
 
 	case "tcp-flood":
-		tcpCfg := TCPFloodConfig{
-			ConnectTimeout: f.Config.Timeout,
-			HoldTime:       f.Config.SessionLifetime, // 0 = infinite
-			SendData:       f.Config.SendDataOnConnect,
-			KeepAlive:      f.Config.TCPKeepAlive,
-		}
-		return NewTCPFlood(tcpCfg, f.BindIP)
+		return NewTCPFloodWithConfig(f.Config, f.BindIP)
 
 	default:
 		log.Printf("Unknown strategy '%s', using 'keepalive'", strategyType)
-		return NewKeepAliveHTTP(f.Config.KeepAliveInterval, f.BindIP)
+		return NewKeepAliveHTTPWithConfig(f.Config, f.BindIP)
 	}
 }
 
 // CreateWithMethod creates an HTTPFlood strategy with a specific HTTP method.
 func (f *StrategyFactory) CreateWithMethod(strategyType, method string) AttackStrategy {
 	if strategyType == "http-flood" {
-		return NewHTTPFlood(
-			f.Config.Timeout,
-			method,
-			f.Config.PostDataSize,
-			f.Config.RequestsPerConn,
-			f.BindIP,
-			f.Config.EnableStealth,
-			f.Config.RandomizePath,
-		)
+		return NewHTTPFloodWithConfig(f.Config, f.BindIP, method)
 	}
 	return f.CreateByType(strategyType)
 }
@@ -178,6 +156,7 @@ func StrategyDefaults(strategyType string) map[string]interface{} {
 		"window-size":       config.DefaultWindowSize,
 		"post-size":         config.DefaultPostDataSize,
 		"requests-per-conn": config.DefaultRequestsPerConn,
+		"session-lifetime":  config.DefaultSessionLifetime,
 	}
 
 	switch strategyType {
@@ -204,6 +183,11 @@ func StrategyDefaults(strategyType string) map[string]interface{} {
 	case "slow-read":
 		defaults["read-size"] = config.DefaultReadSize
 		defaults["window-size"] = config.DefaultWindowSize
+
+	case "tcp-flood":
+		defaults["session-lifetime"] = config.DefaultSessionLifetime
+		defaults["tcp-keepalive"] = true
+		defaults["send-data"] = false
 	}
 
 	return defaults
@@ -250,11 +234,11 @@ func RecommendedSessions(strategyType string, baseCount int) (targetSessions, se
 // EstimateResourceUsage estimates resource usage for given configuration.
 func EstimateResourceUsage(strategyType string, sessions int, duration time.Duration) ResourceEstimate {
 	estimate := ResourceEstimate{
-		Strategy:         strategyType,
-		Sessions:         sessions,
-		Duration:         duration,
-		EstimatedConns:   sessions,
-		EstimatedMemMB:   float64(sessions) * 0.1, // ~100KB per session baseline
+		Strategy:           strategyType,
+		Sessions:           sessions,
+		Duration:           duration,
+		EstimatedConns:     sessions,
+		EstimatedMemMB:     float64(sessions) * 0.1, // ~100KB per session baseline
 		EstimatedBandwidth: "varies",
 	}
 

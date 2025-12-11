@@ -2,7 +2,6 @@ package strategy
 
 import (
 	"context"
-	"sync/atomic"
 	"time"
 
 	"github.com/jdw/loadtestforge/internal/config"
@@ -14,94 +13,72 @@ import (
 // It sends incomplete HTTP requests with Connection: keep-alive header
 // to appear as a legitimate browser while holding server connections.
 type Slowloris struct {
-	keepAliveInterval time.Duration
-	connConfig        netutil.ConnConfig
-	headerRandomizer  *httpdata.HeaderRandomizer
-	activeConnections int64
-	metricsCallback   MetricsCallback
+	BaseStrategy
 }
 
+// NewSlowloris creates a new Slowloris strategy with the given keep-alive interval.
 func NewSlowloris(keepAliveInterval time.Duration, bindIP string) *Slowloris {
+	common := DefaultCommonConfig()
+	common.KeepAliveInterval = keepAliveInterval
 	return &Slowloris{
-		keepAliveInterval: keepAliveInterval,
-		connConfig:        netutil.DefaultConnConfig(bindIP),
-		headerRandomizer:  httpdata.DefaultHeaderRandomizer(),
+		BaseStrategy: NewBaseStrategy(bindIP, common),
 	}
 }
 
-// SetMetricsCallback sets the metrics callback for telemetry.
-func (s *Slowloris) SetMetricsCallback(callback MetricsCallback) {
-	s.metricsCallback = callback
+// NewSlowlorisWithConfig creates a Slowloris strategy from StrategyConfig.
+func NewSlowlorisWithConfig(cfg *config.StrategyConfig, bindIP string) *Slowloris {
+	return &Slowloris{
+		BaseStrategy: NewBaseStrategyFromConfig(cfg, bindIP),
+	}
 }
 
 func (s *Slowloris) Execute(ctx context.Context, target Target) error {
 	connID := generateConnID()
 	startTime := time.Now()
 
-	mc, parsedURL, err := netutil.DialManaged(ctx, target.URL, s.connConfig, &s.activeConnections)
+	mc, parsedURL, err := netutil.DialManaged(ctx, target.URL, s.GetConnConfig(), &s.activeConnections)
 	if err != nil {
 		return err
 	}
 	defer mc.Close()
 
 	// Record connection start
-	if s.metricsCallback != nil {
-		s.metricsCallback.RecordConnectionStart(connID, mc.RemoteAddr().String())
-	}
+	s.RecordConnectionStart(connID, mc.RemoteAddr().String())
 
 	userAgent := httpdata.RandomUserAgent()
 
 	// Send incomplete HTTP request with browser-like headers
-	incompleteRequest := s.headerRandomizer.BuildIncompleteRequest(parsedURL, userAgent)
+	incompleteRequest := s.GetHeaderRandomizer().BuildIncompleteRequest(parsedURL, userAgent)
 
 	if _, err := mc.WriteWithTimeout([]byte(incompleteRequest), config.DefaultWriteTimeout); err != nil {
-		if s.metricsCallback != nil {
-			s.metricsCallback.RecordSocketTimeout()
-		}
+		s.RecordTimeout()
 		return err
 	}
 
 	// Record initial success
-	if s.metricsCallback != nil {
-		s.metricsCallback.RecordSuccessWithLatency(time.Since(startTime))
-	}
+	s.RecordLatency(time.Since(startTime))
 
-	ticker := time.NewTicker(s.keepAliveInterval)
+	ticker := time.NewTicker(s.GetKeepAliveInterval())
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-mc.Context().Done():
-			if s.metricsCallback != nil {
-				s.metricsCallback.RecordConnectionEnd(connID)
-			}
+			s.RecordConnectionEnd(connID)
 			return nil
 		case <-ticker.C:
 			header := httpdata.GenerateDummyHeader()
 			if _, err := mc.WriteWithTimeout([]byte(header), config.DefaultWriteTimeout); err != nil {
-				if s.metricsCallback != nil {
-					s.metricsCallback.RecordSocketTimeout()
-					s.metricsCallback.RecordConnectionEnd(connID)
-				}
+				s.RecordTimeout()
+				s.RecordConnectionEnd(connID)
 				return err
 			}
 			// Record activity
-			if s.metricsCallback != nil {
-				s.metricsCallback.RecordConnectionActivity(connID)
-			}
+			s.RecordConnectionActivity(connID)
 		}
 	}
 }
 
 func (s *Slowloris) Name() string {
 	return "slowloris"
-}
-
-func (s *Slowloris) ActiveConnections() int64 {
-	return atomic.LoadInt64(&s.activeConnections)
-}
-
-// generateConnID generates a unique connection ID for logging.
-func generateConnID() string {
-	return httpdata.GenerateSessionID()[:8]
 }

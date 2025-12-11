@@ -9,12 +9,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jdw/loadtestforge/internal/config"
 	"github.com/jdw/loadtestforge/internal/netutil"
 )
 
 // TCPFloodConfig holds configuration for TCP Connection Flood attack.
 type TCPFloodConfig struct {
-	ConnectTimeout time.Duration
+	Common         CommonConfig  // Embedded common configuration
 	HoldTime       time.Duration // 0 = infinite (hold until server closes)
 	SendData       bool          // Send a byte after connection
 	KeepAlive      bool          // Enable TCP keep-alive
@@ -23,10 +24,20 @@ type TCPFloodConfig struct {
 // DefaultTCPFloodConfig returns sensible defaults for TCP Flood.
 func DefaultTCPFloodConfig() TCPFloodConfig {
 	return TCPFloodConfig{
-		ConnectTimeout: 10 * time.Second,
-		HoldTime:       0, // infinite by default
-		SendData:       false,
-		KeepAlive:      true,
+		Common:    DefaultCommonConfig(),
+		HoldTime:  0, // infinite by default (hold until server closes)
+		SendData:  false,
+		KeepAlive: true,
+	}
+}
+
+// TCPFloodConfigFromStrategyConfig creates TCPFloodConfig from StrategyConfig.
+func TCPFloodConfigFromStrategyConfig(cfg *config.StrategyConfig) TCPFloodConfig {
+	return TCPFloodConfig{
+		Common:    CommonConfigFromStrategyConfig(cfg),
+		HoldTime:  cfg.SessionLifetime, // 0 = infinite
+		SendData:  cfg.SendDataOnConnect,
+		KeepAlive: cfg.TCPKeepAlive,
 	}
 }
 
@@ -123,20 +134,23 @@ func (s *TCPFloodStats) UpdatePeak() {
 // It rapidly creates TCP connections to exhaust server connection limits
 // and holds them until the server closes or context is cancelled.
 type TCPFlood struct {
-	config            TCPFloodConfig
-	stats             *TCPFloodStats
-	activeConnections int64
-	metricsCallback   MetricsCallback
-	bindConfig        *netutil.BindConfig
+	BaseStrategy
+	tcpConfig TCPFloodConfig
+	stats     *TCPFloodStats
 }
 
 // NewTCPFlood creates a new TCP Flood attack strategy.
 func NewTCPFlood(cfg TCPFloodConfig, bindIP string) *TCPFlood {
 	return &TCPFlood{
-		config:     cfg,
-		stats:      NewTCPFloodStats(),
-		bindConfig: netutil.NewBindConfig(bindIP),
+		BaseStrategy: NewBaseStrategy(bindIP, cfg.Common),
+		tcpConfig:    cfg,
+		stats:        NewTCPFloodStats(),
 	}
+}
+
+// NewTCPFloodWithConfig creates a TCPFlood strategy from StrategyConfig.
+func NewTCPFloodWithConfig(cfg *config.StrategyConfig, bindIP string) *TCPFlood {
+	return NewTCPFlood(TCPFloodConfigFromStrategyConfig(cfg), bindIP)
 }
 
 // Execute performs a single TCP Flood attack cycle.
@@ -156,7 +170,7 @@ func (t *TCPFlood) Execute(ctx context.Context, target Target) error {
 	}
 
 	connectTime := time.Now()
-	atomic.AddInt64(&t.activeConnections, 1)
+	t.IncrementConnections()
 	atomic.AddInt64(&t.stats.Active, 1)
 	atomic.AddInt64(&t.stats.Created, 1)
 	atomic.AddInt64(&t.stats.Successful, 1)
@@ -164,13 +178,13 @@ func (t *TCPFlood) Execute(ctx context.Context, target Target) error {
 
 	defer func() {
 		conn.Close()
-		atomic.AddInt64(&t.activeConnections, -1)
+		t.DecrementConnections()
 		atomic.AddInt64(&t.stats.Active, -1)
 		t.stats.RecordDuration(time.Since(connectTime))
 	}()
 
 	// Optional: send a byte after connection
-	if t.config.SendData {
+	if t.tcpConfig.SendData {
 		conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 		if _, err := conn.Write([]byte{0x00}); err != nil {
 			// Ignore error, connection may still be valid
@@ -178,7 +192,7 @@ func (t *TCPFlood) Execute(ctx context.Context, target Target) error {
 	}
 
 	// Hold connection until server drops or context cancels
-	if t.config.HoldTime > 0 {
+	if t.tcpConfig.HoldTime > 0 {
 		// Timed hold mode
 		return t.holdForDuration(ctx, conn)
 	}
@@ -189,11 +203,11 @@ func (t *TCPFlood) Execute(ctx context.Context, target Target) error {
 
 func (t *TCPFlood) dialWithOptions(ctx context.Context, host string, useTLS bool, hostname string) (net.Conn, error) {
 	dialer := &net.Dialer{
-		Timeout:   t.config.ConnectTimeout,
-		LocalAddr: t.bindConfig.GetLocalAddr(),
+		Timeout:   t.Common.ConnectTimeout,
+		LocalAddr: t.GetLocalAddr(),
 	}
 
-	dialCtx, cancel := context.WithTimeout(ctx, t.config.ConnectTimeout)
+	dialCtx, cancel := context.WithTimeout(ctx, t.Common.ConnectTimeout)
 	defer cancel()
 
 	var conn net.Conn
@@ -217,7 +231,7 @@ func (t *TCPFlood) dialWithOptions(ctx context.Context, host string, useTLS bool
 	if tcpConn, ok := conn.(*net.TCPConn); ok {
 		tcpConn.SetNoDelay(true)
 
-		if t.config.KeepAlive {
+		if t.tcpConfig.KeepAlive {
 			tcpConn.SetKeepAlive(true)
 			tcpConn.SetKeepAlivePeriod(60 * time.Second)
 		}
@@ -260,7 +274,7 @@ func (t *TCPFlood) holdUntilServerDrops(ctx context.Context, conn net.Conn) erro
 
 // holdForDuration holds the connection for the specified duration.
 func (t *TCPFlood) holdForDuration(ctx context.Context, conn net.Conn) error {
-	timer := time.NewTimer(t.config.HoldTime)
+	timer := time.NewTimer(t.tcpConfig.HoldTime)
 	defer timer.Stop()
 
 	select {
@@ -277,17 +291,7 @@ func (t *TCPFlood) Name() string {
 	return "tcp-flood"
 }
 
-// ActiveConnections returns the current number of active connections.
-func (t *TCPFlood) ActiveConnections() int64 {
-	return atomic.LoadInt64(&t.activeConnections)
-}
-
 // Stats returns the detailed statistics.
 func (t *TCPFlood) Stats() *TCPFloodStats {
 	return t.stats
-}
-
-// SetMetricsCallback sets the metrics callback for reporting.
-func (t *TCPFlood) SetMetricsCallback(callback MetricsCallback) {
-	t.metricsCallback = callback
 }

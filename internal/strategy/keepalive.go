@@ -6,43 +6,40 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"sync/atomic"
 	"time"
 
+	"github.com/jdw/loadtestforge/internal/config"
 	"github.com/jdw/loadtestforge/internal/httpdata"
 	"github.com/jdw/loadtestforge/internal/netutil"
 )
 
+// KeepAliveHTTP implements HTTP keep-alive connection strategy.
+// It sends regular GET requests over a persistent connection to
+// keep the connection alive and consume server resources.
 type KeepAliveHTTP struct {
-	pingInterval      time.Duration
-	connConfig        netutil.ConnConfig
-	headerRandomizer  *httpdata.HeaderRandomizer
-	metricsCallback   MetricsCallback
-	activeConnections int64
+	BaseStrategy
 }
 
+// NewKeepAliveHTTP creates a new KeepAliveHTTP strategy.
 func NewKeepAliveHTTP(pingInterval time.Duration, bindIP string) *KeepAliveHTTP {
+	common := DefaultCommonConfig()
+	common.KeepAliveInterval = pingInterval
 	return &KeepAliveHTTP{
-		pingInterval:     pingInterval,
-		connConfig:       netutil.DefaultConnConfig(bindIP),
-		headerRandomizer: httpdata.DefaultHeaderRandomizer(),
+		BaseStrategy: NewBaseStrategy(bindIP, common),
 	}
 }
 
-func (k *KeepAliveHTTP) SetMetricsCallback(callback MetricsCallback) {
-	k.metricsCallback = callback
-}
-
-func (k *KeepAliveHTTP) ActiveConnections() int64 {
-	return atomic.LoadInt64(&k.activeConnections)
+// NewKeepAliveHTTPWithConfig creates a KeepAliveHTTP strategy from StrategyConfig.
+func NewKeepAliveHTTPWithConfig(cfg *config.StrategyConfig, bindIP string) *KeepAliveHTTP {
+	return &KeepAliveHTTP{
+		BaseStrategy: NewBaseStrategyFromConfig(cfg, bindIP),
+	}
 }
 
 func (k *KeepAliveHTTP) Execute(ctx context.Context, target Target) error {
-	mc, parsedURL, err := netutil.DialManaged(ctx, target.URL, k.connConfig, &k.activeConnections)
+	mc, parsedURL, err := netutil.DialManaged(ctx, target.URL, k.GetConnConfig(), &k.activeConnections)
 	if err != nil {
-		if k.metricsCallback != nil {
-			k.metricsCallback.RecordSocketTimeout()
-		}
+		k.RecordTimeout()
 		return err
 	}
 
@@ -50,14 +47,10 @@ func (k *KeepAliveHTTP) Execute(ctx context.Context, target Target) error {
 
 	defer func() {
 		mc.Close()
-		if k.metricsCallback != nil {
-			k.metricsCallback.RecordConnectionEnd(connID)
-		}
+		k.RecordConnectionEnd(connID)
 	}()
 
-	if k.metricsCallback != nil {
-		k.metricsCallback.RecordConnectionStart(connID, mc.RemoteAddr().String())
-	}
+	k.RecordConnectionStart(connID, mc.RemoteAddr().String())
 
 	userAgent := httpdata.RandomUserAgent()
 	path := parsedURL.Path
@@ -68,27 +61,21 @@ func (k *KeepAliveHTTP) Execute(ctx context.Context, target Target) error {
 		path += "?" + parsedURL.RawQuery
 	}
 
-	request := k.headerRandomizer.BuildGETRequest(parsedURL, userAgent)
+	request := k.GetHeaderRandomizer().BuildGETRequest(parsedURL, userAgent)
 
 	if _, err := mc.WriteWithTimeout([]byte(request), 5*time.Second); err != nil {
-		if k.metricsCallback != nil {
-			k.metricsCallback.RecordSocketTimeout()
-		}
+		k.RecordTimeout()
 		return err
 	}
 
-	if k.metricsCallback != nil {
-		k.metricsCallback.RecordConnectionActivity(connID)
-	}
+	k.RecordConnectionActivity(connID)
 
 	mc.SetReadTimeout(10 * time.Second)
 	reader := bufio.NewReader(mc.Conn)
 
 	statusLine, err := reader.ReadString('\n')
 	if err != nil {
-		if k.metricsCallback != nil {
-			k.metricsCallback.RecordSocketTimeout()
-		}
+		k.RecordTimeout()
 		return fmt.Errorf("failed to read status: %w", err)
 	}
 
@@ -101,9 +88,7 @@ func (k *KeepAliveHTTP) Execute(ctx context.Context, target Target) error {
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
-			if k.metricsCallback != nil {
-				k.metricsCallback.RecordSocketTimeout()
-			}
+			k.RecordTimeout()
 			return fmt.Errorf("failed to read headers: %w", err)
 		}
 		line = strings.TrimSpace(line)
@@ -119,9 +104,8 @@ func (k *KeepAliveHTTP) Execute(ctx context.Context, target Target) error {
 		}
 	}
 
-	// 응답 본문 소비
+	// Consume response body
 	if isChunked {
-		// Chunked encoding: 각 청크를 읽어서 버림
 		if err := drainChunkedBody(reader); err != nil {
 			return fmt.Errorf("failed to drain chunked body: %w", err)
 		}
@@ -129,7 +113,7 @@ func (k *KeepAliveHTTP) Execute(ctx context.Context, target Target) error {
 		io.CopyN(io.Discard, reader, contentLength)
 	}
 
-	ticker := time.NewTicker(k.pingInterval)
+	ticker := time.NewTicker(k.GetKeepAliveInterval())
 	defer ticker.Stop()
 
 	pingCount := 0
@@ -143,13 +127,11 @@ func (k *KeepAliveHTTP) Execute(ctx context.Context, target Target) error {
 		case <-ticker.C:
 			pingCount++
 
-			pingRequest := k.headerRandomizer.BuildGETRequest(parsedURL, userAgent)
+			pingRequest := k.GetHeaderRandomizer().BuildGETRequest(parsedURL, userAgent)
 
 			if _, err := mc.WriteWithTimeout([]byte(pingRequest), 5*time.Second); err != nil {
-				if k.metricsCallback != nil {
-					k.metricsCallback.RecordSocketTimeout()
-					k.metricsCallback.RecordSocketReconnect()
-				}
+				k.RecordTimeout()
+				k.RecordReconnect()
 				consecutiveErrors++
 				if consecutiveErrors >= maxConsecutiveErrors {
 					return fmt.Errorf("ping failed after %d attempts: %w", maxConsecutiveErrors, err)
@@ -157,17 +139,13 @@ func (k *KeepAliveHTTP) Execute(ctx context.Context, target Target) error {
 				continue
 			}
 
-			if k.metricsCallback != nil {
-				k.metricsCallback.RecordConnectionActivity(connID)
-			}
+			k.RecordConnectionActivity(connID)
 
 			mc.SetReadTimeout(5 * time.Second)
 			statusLine, err := reader.ReadString('\n')
 			if err != nil {
-				if k.metricsCallback != nil {
-					k.metricsCallback.RecordSocketTimeout()
-					k.metricsCallback.RecordSocketReconnect()
-				}
+				k.RecordTimeout()
+				k.RecordReconnect()
 				consecutiveErrors++
 				if consecutiveErrors >= maxConsecutiveErrors {
 					return fmt.Errorf("ping response failed after %d attempts: %w", maxConsecutiveErrors, err)
@@ -184,9 +162,7 @@ func (k *KeepAliveHTTP) Execute(ctx context.Context, target Target) error {
 			for {
 				line, err := reader.ReadString('\n')
 				if err != nil {
-					if k.metricsCallback != nil {
-						k.metricsCallback.RecordSocketTimeout()
-					}
+					k.RecordTimeout()
 					return fmt.Errorf("failed to read ping headers: %w", err)
 				}
 				if strings.TrimSpace(line) == "" {

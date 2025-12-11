@@ -6,21 +6,28 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sync/atomic"
 	"time"
 
+	"github.com/jdw/loadtestforge/internal/config"
 	"github.com/jdw/loadtestforge/internal/netutil"
 )
 
+// NormalHTTP implements standard HTTP request strategy.
+// Each request creates a new connection (Connection: close behavior).
 type NormalHTTP struct {
-	client            *http.Client
-	timeout           time.Duration
-	activeConnections int64
+	BaseStrategy
+	client  *http.Client
+	timeout time.Duration
 }
 
+// NewNormalHTTP creates a new NormalHTTP strategy.
 func NewNormalHTTP(timeout time.Duration, bindIP string) *NormalHTTP {
+	common := DefaultCommonConfig()
+	common.ConnectTimeout = timeout
+
 	n := &NormalHTTP{
-		timeout: timeout,
+		BaseStrategy: NewBaseStrategy(bindIP, common),
+		timeout:      timeout,
 	}
 
 	dialerCfg := netutil.DialerConfig{
@@ -45,8 +52,9 @@ func NewNormalHTTP(timeout time.Duration, bindIP string) *NormalHTTP {
 	return n
 }
 
-func (n *NormalHTTP) ActiveConnections() int64 {
-	return atomic.LoadInt64(&n.activeConnections)
+// NewNormalHTTPWithConfig creates a NormalHTTP strategy from StrategyConfig.
+func NewNormalHTTPWithConfig(cfg *config.StrategyConfig, bindIP string) *NormalHTTP {
+	return NewNormalHTTP(cfg.Timeout, bindIP)
 }
 
 func (n *NormalHTTP) Execute(ctx context.Context, target Target) error {

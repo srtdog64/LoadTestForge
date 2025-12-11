@@ -13,15 +13,81 @@ import (
 	"github.com/jdw/loadtestforge/internal/netutil"
 )
 
+// =============================================================================
+// CommonConfig - Shared configuration for all strategies
+// =============================================================================
+
+// CommonConfig holds configuration options shared across all attack strategies.
+// Embed this in strategy-specific configs to inherit common options.
+type CommonConfig struct {
+	// Connection settings
+	ConnectTimeout  time.Duration // Timeout for establishing connections
+	SessionLifetime time.Duration // 0 = unlimited (hold until server closes)
+
+	// Keep-alive settings
+	KeepAliveInterval time.Duration // Interval for keep-alive/ping packets
+	TCPKeepAlive      bool          // Enable TCP-level keep-alive
+
+	// Evasion settings
+	EnableStealth bool // Browser fingerprint headers (Sec-Fetch-*)
+	RandomizePath bool // Realistic query strings for cache bypass
+}
+
+// DefaultCommonConfig returns sensible defaults for CommonConfig.
+func DefaultCommonConfig() CommonConfig {
+	return CommonConfig{
+		ConnectTimeout:    config.DefaultConnectTimeout,
+		SessionLifetime:   config.DefaultSessionLifetime, // 0 = unlimited
+		KeepAliveInterval: config.DefaultKeepAliveInterval,
+		TCPKeepAlive:      true,
+		EnableStealth:     false,
+		RandomizePath:     false,
+	}
+}
+
+// CommonConfigFromStrategyConfig creates CommonConfig from config.StrategyConfig.
+func CommonConfigFromStrategyConfig(cfg *config.StrategyConfig) CommonConfig {
+	return CommonConfig{
+		ConnectTimeout:    cfg.Timeout,
+		SessionLifetime:   cfg.SessionLifetime,
+		KeepAliveInterval: cfg.KeepAliveInterval,
+		TCPKeepAlive:      cfg.TCPKeepAlive,
+		EnableStealth:     cfg.EnableStealth,
+		RandomizePath:     cfg.RandomizePath,
+	}
+}
+
+// ToConnConfig converts CommonConfig to netutil.ConnConfig for a given bindIP.
+func (c CommonConfig) ToConnConfig(bindIP string) netutil.ConnConfig {
+	return netutil.ConnConfig{
+		Timeout:        c.ConnectTimeout,
+		MaxSessionLife: c.SessionLifetime,
+		LocalAddr:      netutil.NewLocalTCPAddr(bindIP),
+		BindConfig:     netutil.NewBindConfig(bindIP),
+		WindowSize:     0,
+	}
+}
+
+// =============================================================================
+// BaseStrategy - Common functionality for all strategies
+// =============================================================================
+
 // BaseStrategy provides common functionality for all attack strategies.
 // Embed this struct in specific strategy implementations to get:
 // - Connection tracking (active connection count)
 // - Metrics callback support
 // - Multi-IP binding configuration
 // - Header randomization
+// - Common configuration
 type BaseStrategy struct {
+	// Common configuration (shared across all strategies)
+	Common CommonConfig
+
 	// Connection binding configuration (single or multi-IP)
 	BindConfig *netutil.BindConfig
+
+	// Cached ConnConfig for DialManaged
+	connConfig netutil.ConnConfig
 
 	// Active connection counter (thread-safe)
 	activeConnections int64
@@ -31,27 +97,29 @@ type BaseStrategy struct {
 
 	// Header randomizer for evasion
 	headerRandomizer *httpdata.HeaderRandomizer
-
-	// Stealth mode for browser fingerprinting
-	enableStealth bool
-
-	// Path randomization for cache bypass
-	randomizePath bool
 }
 
 // NewBaseStrategy creates a new BaseStrategy with the given configuration.
-func NewBaseStrategy(bindIP string, enableStealth, randomizePath bool) BaseStrategy {
+func NewBaseStrategy(bindIP string, common CommonConfig) BaseStrategy {
 	return BaseStrategy{
+		Common:           common,
 		BindConfig:       netutil.NewBindConfig(bindIP),
+		connConfig:       common.ToConnConfig(bindIP),
 		headerRandomizer: httpdata.DefaultHeaderRandomizer(),
-		enableStealth:    enableStealth,
-		randomizePath:    randomizePath,
 	}
+}
+
+// NewBaseStrategySimple creates a BaseStrategy with minimal config (for backward compatibility).
+func NewBaseStrategySimple(bindIP string, enableStealth, randomizePath bool) BaseStrategy {
+	common := DefaultCommonConfig()
+	common.EnableStealth = enableStealth
+	common.RandomizePath = randomizePath
+	return NewBaseStrategy(bindIP, common)
 }
 
 // NewBaseStrategyFromConfig creates a BaseStrategy from StrategyConfig.
 func NewBaseStrategyFromConfig(cfg *config.StrategyConfig, bindIP string) BaseStrategy {
-	return NewBaseStrategy(bindIP, cfg.EnableStealth, cfg.RandomizePath)
+	return NewBaseStrategy(bindIP, CommonConfigFromStrategyConfig(cfg))
 }
 
 // SetMetricsCallback sets the metrics callback for telemetry.
@@ -96,12 +164,27 @@ func (b *BaseStrategy) GetHeaderRandomizer() *httpdata.HeaderRandomizer {
 
 // IsStealthEnabled returns whether stealth mode is enabled.
 func (b *BaseStrategy) IsStealthEnabled() bool {
-	return b.enableStealth
+	return b.Common.EnableStealth
 }
 
 // IsPathRandomized returns whether path randomization is enabled.
 func (b *BaseStrategy) IsPathRandomized() bool {
-	return b.randomizePath
+	return b.Common.RandomizePath
+}
+
+// GetConnConfig returns the cached ConnConfig for DialManaged.
+func (b *BaseStrategy) GetConnConfig() netutil.ConnConfig {
+	return b.connConfig
+}
+
+// GetKeepAliveInterval returns the keep-alive interval.
+func (b *BaseStrategy) GetKeepAliveInterval() time.Duration {
+	return b.Common.KeepAliveInterval
+}
+
+// GetSessionLifetime returns the session lifetime (0 = unlimited).
+func (b *BaseStrategy) GetSessionLifetime() time.Duration {
+	return b.Common.SessionLifetime
 }
 
 // RecordLatency records a successful request with latency if metrics callback is set.
@@ -194,7 +277,7 @@ func (b *BaseStrategy) BuildIncompleteRequest(parsedURL *url.URL, userAgent stri
 
 // GetRandomizedPath returns the path with optional randomization.
 func (b *BaseStrategy) GetRandomizedPath(basePath string) string {
-	if !b.randomizePath {
+	if !b.Common.RandomizePath {
 		if basePath == "" {
 			return "/"
 		}
@@ -203,6 +286,15 @@ func (b *BaseStrategy) GetRandomizedPath(basePath string) string {
 
 	randomizer := httpdata.DefaultPathRandomizer()
 	return randomizer.RandomizePath(basePath)
+}
+
+// =============================================================================
+// Connection ID Generation
+// =============================================================================
+
+// generateConnID generates a unique connection ID for logging.
+func generateConnID() string {
+	return httpdata.GenerateSessionID()[:8]
 }
 
 // =============================================================================

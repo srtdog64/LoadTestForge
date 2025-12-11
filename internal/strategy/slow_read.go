@@ -3,7 +3,6 @@ package strategy
 import (
 	"context"
 	"io"
-	"sync/atomic"
 	"time"
 
 	"github.com/jdw/loadtestforge/internal/config"
@@ -15,64 +14,61 @@ import (
 // It sends a complete HTTP request but reads the response very slowly,
 // forcing the server to keep the connection open and buffer the response.
 type SlowRead struct {
-	readInterval      time.Duration
-	readSize          int
-	connConfig        netutil.ConnConfig
-	headerRandomizer  *httpdata.HeaderRandomizer
-	activeConnections int64
-	metricsCallback   MetricsCallback
+	BaseStrategy
+	readSize int
 }
 
+// NewSlowRead creates a new SlowRead strategy.
 func NewSlowRead(readInterval time.Duration, readSize int, windowSize int, bindIP string) *SlowRead {
-	cfg := netutil.DefaultConnConfig(bindIP)
-	cfg.WindowSize = windowSize
+	common := DefaultCommonConfig()
+	common.KeepAliveInterval = readInterval
 
-	return &SlowRead{
-		readInterval:     readInterval,
-		readSize:         readSize,
-		connConfig:       cfg,
-		headerRandomizer: httpdata.DefaultHeaderRandomizer(),
+	s := &SlowRead{
+		BaseStrategy: NewBaseStrategy(bindIP, common),
+		readSize:     readSize,
 	}
+	// Override window size in connConfig
+	s.connConfig.WindowSize = windowSize
+	return s
 }
 
-// SetMetricsCallback sets the metrics callback for telemetry.
-func (s *SlowRead) SetMetricsCallback(callback MetricsCallback) {
-	s.metricsCallback = callback
+// NewSlowReadWithConfig creates a SlowRead strategy from StrategyConfig.
+func NewSlowReadWithConfig(cfg *config.StrategyConfig, bindIP string) *SlowRead {
+	s := &SlowRead{
+		BaseStrategy: NewBaseStrategyFromConfig(cfg, bindIP),
+		readSize:     cfg.ReadSize,
+	}
+	s.connConfig.WindowSize = cfg.WindowSize
+	return s
 }
 
 func (s *SlowRead) Execute(ctx context.Context, target Target) error {
 	connID := generateConnID()
 	startTime := time.Now()
 
-	mc, parsedURL, err := netutil.DialManaged(ctx, target.URL, s.connConfig, &s.activeConnections)
+	mc, parsedURL, err := netutil.DialManaged(ctx, target.URL, s.GetConnConfig(), &s.activeConnections)
 	if err != nil {
 		return err
 	}
 	defer mc.Close()
 
 	// Record connection start
-	if s.metricsCallback != nil {
-		s.metricsCallback.RecordConnectionStart(connID, mc.RemoteAddr().String())
-	}
+	s.RecordConnectionStart(connID, mc.RemoteAddr().String())
 
 	userAgent := httpdata.RandomUserAgent()
 
 	// Build GET request (Accept-Encoding: identity to prevent compression)
-	request := s.headerRandomizer.BuildGETRequest(parsedURL, userAgent)
+	request := s.GetHeaderRandomizer().BuildGETRequest(parsedURL, userAgent)
 
 	if _, err := mc.WriteWithTimeout([]byte(request), config.DefaultWriteTimeout); err != nil {
-		if s.metricsCallback != nil {
-			s.metricsCallback.RecordSocketTimeout()
-		}
+		s.RecordTimeout()
 		return err
 	}
 
 	// Record initial success
-	if s.metricsCallback != nil {
-		s.metricsCallback.RecordSuccessWithLatency(time.Since(startTime))
-	}
+	s.RecordLatency(time.Since(startTime))
 
-	ticker := time.NewTicker(s.readInterval)
+	ticker := time.NewTicker(s.GetKeepAliveInterval())
 	defer ticker.Stop()
 
 	readBuffer := make([]byte, s.readSize)
@@ -81,9 +77,7 @@ func (s *SlowRead) Execute(ctx context.Context, target Target) error {
 	for {
 		select {
 		case <-mc.Context().Done():
-			if s.metricsCallback != nil {
-				s.metricsCallback.RecordConnectionEnd(connID)
-			}
+			s.RecordConnectionEnd(connID)
 			return nil
 		case <-ticker.C:
 			// Read very small amount of data very slowly
@@ -93,31 +87,25 @@ func (s *SlowRead) Execute(ctx context.Context, target Target) error {
 			if err == io.EOF || (err == nil && n == 0) {
 				// Server finished sending, send new request on the same connection
 				if _, err := mc.WriteWithTimeout([]byte(request), config.DefaultWriteTimeout); err != nil {
-					if s.metricsCallback != nil {
-						s.metricsCallback.RecordSocketTimeout()
-						s.metricsCallback.RecordConnectionEnd(connID)
-					}
+					s.RecordTimeout()
+					s.RecordConnectionEnd(connID)
 					return err
 				}
 				// Record reconnect
-				if s.metricsCallback != nil {
-					s.metricsCallback.RecordSocketReconnect()
-				}
+				s.RecordReconnect()
 				continue
 			}
 
 			if err != nil {
-				if s.metricsCallback != nil {
-					s.metricsCallback.RecordSocketTimeout()
-					s.metricsCallback.RecordConnectionEnd(connID)
-				}
+				s.RecordTimeout()
+				s.RecordConnectionEnd(connID)
 				return err
 			}
 
 			readCount++
 			// Record activity periodically (every 10 reads)
-			if s.metricsCallback != nil && readCount%10 == 0 {
-				s.metricsCallback.RecordConnectionActivity(connID)
+			if readCount%10 == 0 {
+				s.RecordConnectionActivity(connID)
 			}
 		}
 	}
@@ -125,8 +113,4 @@ func (s *SlowRead) Execute(ctx context.Context, target Target) error {
 
 func (s *SlowRead) Name() string {
 	return "slow-read"
-}
-
-func (s *SlowRead) ActiveConnections() int64 {
-	return atomic.LoadInt64(&s.activeConnections)
 }
