@@ -1,4 +1,4 @@
-module github.com/jdw/loadtestforge
+module github.com/srtdog64/loadtestforge
 
 go 1.21
 

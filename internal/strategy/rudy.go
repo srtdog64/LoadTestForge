@@ -13,8 +13,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jdw/loadtestforge/internal/httpdata"
-	"github.com/jdw/loadtestforge/internal/netutil"
+	"github.com/srtdog64/loadtestforge/internal/httpdata"
+	"github.com/srtdog64/loadtestforge/internal/netutil"
 )
 
 // RUDYConfig holds configuration for RUDY attack.

@@ -85,7 +85,7 @@ A personal toy project for learning about HTTP load testing and network stress p
 
 ```bash
 # Clone the repository
-git clone https://github.com/jdw/LoadTestForge.git
+git clone https://github.com/srtdog64/LoadTestForge.git
 cd LoadTestForge
 
 # Build

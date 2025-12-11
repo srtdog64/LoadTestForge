@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/jdw/loadtestforge/internal/config"
+	"github.com/srtdog64/loadtestforge/internal/config"
 )
 
 // StrategyFactory creates attack strategies based on configuration.

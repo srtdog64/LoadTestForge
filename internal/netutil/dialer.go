@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jdw/loadtestforge/internal/config"
+	"github.com/srtdog64/loadtestforge/internal/config"
 )
 
 // DialerConfig holds configuration for creating custom dialers.

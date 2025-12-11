@@ -10,9 +10,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jdw/loadtestforge/internal/config"
-	"github.com/jdw/loadtestforge/internal/metrics"
-	"github.com/jdw/loadtestforge/internal/strategy"
+	"github.com/srtdog64/loadtestforge/internal/config"
+	"github.com/srtdog64/loadtestforge/internal/metrics"
+	"github.com/srtdog64/loadtestforge/internal/strategy"
 	"golang.org/x/time/rate"
 )
 

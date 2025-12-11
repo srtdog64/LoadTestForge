@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jdw/loadtestforge/internal/config"
-	"github.com/jdw/loadtestforge/internal/netutil"
+	"github.com/srtdog64/loadtestforge/internal/config"
+	"github.com/srtdog64/loadtestforge/internal/netutil"
 )
 
 // TCPFloodConfig holds configuration for TCP Connection Flood attack.

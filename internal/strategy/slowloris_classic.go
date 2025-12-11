@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/jdw/loadtestforge/internal/config"
-	"github.com/jdw/loadtestforge/internal/httpdata"
-	"github.com/jdw/loadtestforge/internal/netutil"
+	"github.com/srtdog64/loadtestforge/internal/config"
+	"github.com/srtdog64/loadtestforge/internal/httpdata"
+	"github.com/srtdog64/loadtestforge/internal/netutil"
 )
 
 // SlowlorisClassic implements the classic Slowloris attack.

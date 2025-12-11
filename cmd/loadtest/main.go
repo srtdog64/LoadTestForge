@@ -14,10 +14,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jdw/loadtestforge/internal/config"
-	"github.com/jdw/loadtestforge/internal/metrics"
-	"github.com/jdw/loadtestforge/internal/session"
-	"github.com/jdw/loadtestforge/internal/strategy"
+	"github.com/srtdog64/loadtestforge/internal/config"
+	"github.com/srtdog64/loadtestforge/internal/metrics"
+	"github.com/srtdog64/loadtestforge/internal/session"
+	"github.com/srtdog64/loadtestforge/internal/strategy"
 )
 
 func main() {

@@ -5,7 +5,7 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/jdw/loadtestforge/internal/config"
+	"github.com/srtdog64/loadtestforge/internal/config"
 )
 
 // Backoff provides exponential backoff with jitter for retry operations.

@@ -12,8 +12,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jdw/loadtestforge/internal/config"
-	"github.com/jdw/loadtestforge/internal/httpdata"
+	"github.com/srtdog64/loadtestforge/internal/config"
+	"github.com/srtdog64/loadtestforge/internal/httpdata"
 
 	"golang.org/x/net/http2"
 )
