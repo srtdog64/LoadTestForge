@@ -1384,6 +1384,12 @@ If you're testing your own infrastructure, here are recommended mitigations for 
 | Parser Stress | Input validation, depth limits, regex timeout |
 | Connection Pool | Connection limits per IP, firewall rules |
 
+## Future Plans
+
+- [ ] **Web Dashboard** - Real-time metrics visualization with live graphs
+- [ ] **Distributed Execution** - Controller/worker architecture for multi-node load generation
+- [ ] **Report Export** - HTML/JSON test reports with charts and summary
+
 ## Contributing
 
 Pull requests welcome! Please:
