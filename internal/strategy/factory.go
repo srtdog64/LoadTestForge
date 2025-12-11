@@ -91,6 +91,15 @@ func (f *StrategyFactory) CreateByType(strategyType string) AttackStrategy {
 		}
 		return NewRUDY(rudyCfg, f.BindIP)
 
+	case "tcp-flood":
+		tcpCfg := TCPFloodConfig{
+			ConnectTimeout: f.Config.Timeout,
+			HoldTime:       f.Config.SessionLifetime, // 0 = infinite
+			SendData:       f.Config.SendDataOnConnect,
+			KeepAlive:      f.Config.TCPKeepAlive,
+		}
+		return NewTCPFlood(tcpCfg, f.BindIP)
+
 	default:
 		log.Printf("Unknown strategy '%s', using 'keepalive'", strategyType)
 		return NewKeepAliveHTTP(f.Config.KeepAliveInterval, f.BindIP)
@@ -126,6 +135,7 @@ func AvailableStrategies() []StrategyInfo {
 		{Name: "h2-flood", Description: "HTTP/2 multiplexed stream flood"},
 		{Name: "heavy-payload", Description: "CPU-intensive payload attacks (JSON/XML/ReDoS)"},
 		{Name: "rudy", Description: "R.U.D.Y. attack - advanced slow POST with evasion"},
+		{Name: "tcp-flood", Description: "TCP Connection Flood - exhaust server connection limits"},
 	}
 }
 
@@ -149,6 +159,7 @@ func ValidateStrategyType(strategyType string) error {
 		"h2-flood":            true,
 		"heavy-payload":       true,
 		"rudy":                true,
+		"tcp-flood":           true,
 	}
 
 	if !validTypes[strategyType] {
@@ -217,6 +228,7 @@ func IsFloodAttack(strategyType string) bool {
 		"http-flood":    true,
 		"h2-flood":      true,
 		"heavy-payload": true,
+		"tcp-flood":     true,
 	}
 	return floodAttacks[strategyType]
 }
@@ -266,6 +278,11 @@ func EstimateResourceUsage(strategyType string, sessions int, duration time.Dura
 		estimate.EstimatedConns = sessions
 		estimate.EstimatedMemMB = float64(sessions) * 1.0 // Large payloads
 		estimate.EstimatedBandwidth = "10-50 Mbps"
+
+	case "tcp-flood":
+		estimate.EstimatedConns = sessions
+		estimate.EstimatedMemMB = float64(sessions) * 0.02 // Minimal per conn
+		estimate.EstimatedBandwidth = "< 1 Mbps"
 	}
 
 	return estimate

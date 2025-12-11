@@ -164,14 +164,14 @@ const (
 	// DefaultChunkSizeMax is the maximum chunk size in bytes
 	DefaultChunkSizeMax = 100
 
-	// DefaultMaxReqPerSession is the default max requests per session
-	DefaultMaxReqPerSession = 10
+	// DefaultMaxReqPerSession is the default max requests per session (0 = unlimited)
+	DefaultMaxReqPerSession = 0
 
 	// DefaultKeepAliveTimeout is the default keep-alive timeout
 	DefaultKeepAliveTimeout = 600 * time.Second
 
-	// DefaultSessionLifetime is the default session lifetime
-	DefaultSessionLifetime = 3600 * time.Second
+	// DefaultSessionLifetime is the default session lifetime (0 = unlimited, hold until server closes)
+	DefaultSessionLifetime = 0
 
 	// DefaultSendBufferSize is the default TCP send buffer size
 	DefaultSendBufferSize = 1024

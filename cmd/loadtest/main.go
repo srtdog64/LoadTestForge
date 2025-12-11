@@ -118,7 +118,7 @@ func parseFlags() *config.Config {
 	// Target settings
 	flag.StringVar(&cfg.Target.URL, "target", "", "Target URL (required)")
 	flag.StringVar(&cfg.Target.Method, "method", "GET", "HTTP method")
-	flag.StringVar(&cfg.Strategy.Type, "strategy", "keepalive", "Attack strategy (normal|keepalive|slowloris|slowloris-keepalive|slow-post|slow-read|http-flood|h2-flood|heavy-payload|rudy)")
+	flag.StringVar(&cfg.Strategy.Type, "strategy", "keepalive", "Attack strategy (normal|keepalive|slowloris|slowloris-keepalive|slow-post|slow-read|http-flood|h2-flood|heavy-payload|rudy|tcp-flood)")
 	flag.StringVar(&cfg.BindIP, "bind-ip", "", "Source IP address(es) to bind, comma-separated for multiple (e.g., 192.168.1.100,192.168.1.101)")
 
 	// Performance settings
@@ -177,6 +177,10 @@ func parseFlags() *config.Config {
 	flag.BoolVar(&cfg.Strategy.EnableStealth, "stealth", false, "Enable browser fingerprint headers (Sec-Fetch-*) for WAF bypass")
 	flag.BoolVar(&cfg.Strategy.RandomizePath, "randomize", false, "Enable realistic query strings for cache bypass")
 	flag.BoolVar(&cfg.Strategy.AnalyzeLatency, "analyze-latency", false, "Enable response time percentile analysis (p50, p95, p99)")
+
+	// TCP Flood settings
+	flag.BoolVar(&cfg.Strategy.SendDataOnConnect, "send-data", false, "Send a byte after TCP connection (tcp-flood)")
+	flag.BoolVar(&cfg.Strategy.TCPKeepAlive, "tcp-keepalive", true, "Enable TCP keep-alive (tcp-flood)")
 
 	flag.Parse()
 

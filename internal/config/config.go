@@ -53,6 +53,9 @@ type StrategyConfig struct {
 	EnableStealth  bool // Browser fingerprint headers (Sec-Fetch-*)
 	RandomizePath  bool // Realistic query strings for cache bypass
 	AnalyzeLatency bool // Response time percentile analysis (p50, p95, p99)
+	// TCP Flood settings
+	SendDataOnConnect bool // Send a byte after TCP connection (tcp-flood)
+	TCPKeepAlive      bool // Enable TCP keep-alive (tcp-flood)
 }
 
 type PulseConfig struct {
@@ -112,6 +115,8 @@ func DefaultConfig() *Config {
 			UseJSON:           false,
 			UseMultipart:      false,
 			EvasionLevel:      2,
+			SendDataOnConnect: false,
+			TCPKeepAlive:      true,
 		},
 		Performance: PerformanceConfig{
 			TargetSessions:         100,
