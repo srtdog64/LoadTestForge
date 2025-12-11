@@ -75,7 +75,10 @@ func (n *NormalHTTP) Execute(ctx context.Context, target Target) error {
 		req.Header.Set(k, v)
 	}
 
+	startTime := time.Now()
 	resp, err := n.client.Do(req)
+	latency := time.Since(startTime)
+
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
@@ -86,6 +89,8 @@ func (n *NormalHTTP) Execute(ctx context.Context, target Target) error {
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("http error: %d", resp.StatusCode)
 	}
+
+	n.RecordLatency(latency)
 
 	return nil
 }

@@ -391,14 +391,11 @@ func (s *RUDYStats) GetAvgSessionDuration() float64 {
 
 // RUDY implements the R-U-Dead-Yet slow POST attack.
 type RUDY struct {
-	config            RUDYConfig
-	sessionManager    *RUDYSessionManager
-	stats             *RUDYStats
-	headerRandomizer  *httpdata.HeaderRandomizer
-	formGenerator     *httpdata.FormDataGenerator
-	activeConnections int64
-	metricsCallback   MetricsCallback
-	bindConfig        *netutil.BindConfig
+	BaseStrategy
+	config         RUDYConfig
+	sessionManager *RUDYSessionManager
+	stats          *RUDYStats
+	formGenerator  *httpdata.FormDataGenerator
 }
 
 // NewRUDY creates a new RUDY attack strategy.
@@ -408,13 +405,20 @@ func NewRUDY(cfg RUDYConfig, bindIP string) *RUDY {
 	formGen.UseMultipart = cfg.UseMultipart
 	formGen.FieldCount = 5
 
+	common := CommonConfig{
+		ConnectTimeout:    cfg.ConnectTimeout,
+		SessionLifetime:   cfg.SessionLifetime,
+		KeepAliveInterval: cfg.KeepAliveTimeout,
+		EnableStealth:     cfg.EvasionLevel >= 2,
+		RandomizePath:     cfg.RandomizePath,
+	}
+
 	return &RUDY{
-		config:           cfg,
-		sessionManager:   NewRUDYSessionManager(1000, cfg.SessionLifetime),
-		stats:            NewRUDYStats(),
-		headerRandomizer: httpdata.DefaultHeaderRandomizer(),
-		formGenerator:    formGen,
-		bindConfig:       netutil.NewBindConfig(bindIP),
+		BaseStrategy:   NewBaseStrategy(bindIP, common),
+		config:         cfg,
+		sessionManager: NewRUDYSessionManager(1000, cfg.SessionLifetime),
+		stats:          NewRUDYStats(),
+		formGenerator:  formGen,
 	}
 }
 
@@ -431,13 +435,13 @@ func (r *RUDY) Execute(ctx context.Context, target Target) error {
 		return err
 	}
 
-	atomic.AddInt64(&r.activeConnections, 1)
+	r.IncrementConnections()
 	atomic.AddInt64(&r.stats.Created, 1)
 	connectionStartTime := time.Now()
 
 	defer func() {
 		conn.Close()
-		atomic.AddInt64(&r.activeConnections, -1)
+		r.DecrementConnections()
 		r.stats.RecordSessionDuration(time.Since(connectionStartTime))
 	}()
 
@@ -489,7 +493,7 @@ func (r *RUDY) dialWithOptions(ctx context.Context, host string, useTLS bool, ho
 	dialer := &net.Dialer{
 		Timeout:   r.config.ConnectTimeout,
 		KeepAlive: 60 * time.Second,
-		LocalAddr: r.bindConfig.GetLocalAddr(),
+		LocalAddr: r.GetLocalAddr(),
 	}
 
 	dialCtx, cancel := context.WithTimeout(ctx, r.config.ConnectTimeout)
@@ -860,17 +864,7 @@ func (r *RUDY) Name() string {
 	return "rudy"
 }
 
-// ActiveConnections returns the current number of active connections.
-func (r *RUDY) ActiveConnections() int64 {
-	return atomic.LoadInt64(&r.activeConnections)
-}
-
 // Stats returns the detailed statistics.
 func (r *RUDY) Stats() *RUDYStats {
 	return r.stats
-}
-
-// SetMetricsCallback sets the metrics callback for reporting.
-func (r *RUDY) SetMetricsCallback(callback MetricsCallback) {
-	r.metricsCallback = callback
 }

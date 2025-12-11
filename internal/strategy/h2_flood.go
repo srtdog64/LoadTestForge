@@ -12,8 +12,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jdw/loadtestforge/internal/config"
 	"github.com/jdw/loadtestforge/internal/httpdata"
-	"github.com/jdw/loadtestforge/internal/netutil"
 
 	"golang.org/x/net/http2"
 )
@@ -22,18 +22,15 @@ import (
 // It opens a single TCP connection and spawns thousands of concurrent streams,
 // effectively bypassing per-IP connection limits while maximizing server load.
 type H2Flood struct {
+	BaseStrategy
 	maxConcurrentStreams int
 	streamBurstSize      int
-	connectionTimeout    time.Duration
-	maxSessionLife       time.Duration
-	activeConnections    int64
 	activeStreams        int64
 	requestsSent         int64
 	streamFailures       int64
-	bindConfig           *netutil.BindConfig
-	metricsCallback      MetricsCallback
 }
 
+// NewH2Flood creates a new H2Flood strategy.
 func NewH2Flood(maxStreams int, burstSize int, bindIP string) *H2Flood {
 	if maxStreams <= 0 {
 		maxStreams = 100
@@ -42,17 +39,25 @@ func NewH2Flood(maxStreams int, burstSize int, bindIP string) *H2Flood {
 		burstSize = 10
 	}
 
+	common := DefaultCommonConfig()
+	common.SessionLifetime = 5 * time.Minute
+
 	return &H2Flood{
+		BaseStrategy:         NewBaseStrategy(bindIP, common),
 		maxConcurrentStreams: maxStreams,
 		streamBurstSize:      burstSize,
-		connectionTimeout:    10 * time.Second,
-		maxSessionLife:       5 * time.Minute,
-		bindConfig:           netutil.NewBindConfig(bindIP),
 	}
 }
 
+// NewH2FloodWithConfig creates an H2Flood strategy from StrategyConfig.
+func NewH2FloodWithConfig(cfg *config.StrategyConfig, bindIP string) *H2Flood {
+	h := NewH2Flood(cfg.MaxStreams, cfg.BurstSize, bindIP)
+	h.Common.SessionLifetime = cfg.SessionLifetime
+	return h
+}
+
 func (h *H2Flood) Execute(ctx context.Context, target Target) error {
-	parsedURL, host, useTLS, err := netutil.ParseTargetURL(target.URL)
+	parsedURL, host, useTLS, err := parseTargetURL(target.URL)
 	if err != nil {
 		return err
 	}
@@ -63,7 +68,12 @@ func (h *H2Flood) Execute(ctx context.Context, target Target) error {
 		return h.executeH2C(ctx, target, parsedURL, host)
 	}
 
-	sessionCtx, cancel := context.WithTimeout(ctx, h.maxSessionLife)
+	sessionLifetime := h.GetSessionLifetime()
+	if sessionLifetime == 0 {
+		sessionLifetime = 5 * time.Minute // Default for H2
+	}
+
+	sessionCtx, cancel := context.WithTimeout(ctx, sessionLifetime)
 	defer cancel()
 
 	// Establish TLS connection with ALPN for HTTP/2
@@ -74,8 +84,8 @@ func (h *H2Flood) Execute(ctx context.Context, target Target) error {
 	}
 
 	dialer := &net.Dialer{
-		Timeout:   h.connectionTimeout,
-		LocalAddr: h.bindConfig.GetLocalAddr(),
+		Timeout:   h.Common.ConnectTimeout,
+		LocalAddr: h.GetLocalAddr(),
 	}
 
 	netConn, err := dialer.DialContext(sessionCtx, "tcp", host)
@@ -95,10 +105,10 @@ func (h *H2Flood) Execute(ctx context.Context, target Target) error {
 		return fmt.Errorf("http/2 not negotiated, got: %s", tlsConn.ConnectionState().NegotiatedProtocol)
 	}
 
-	atomic.AddInt64(&h.activeConnections, 1)
+	h.IncrementConnections()
 	defer func() {
 		tlsConn.Close()
-		atomic.AddInt64(&h.activeConnections, -1)
+		h.DecrementConnections()
 	}()
 
 	// Create HTTP/2 transport and client connection
@@ -191,19 +201,22 @@ func (h *H2Flood) sendStream(ctx context.Context, cc *http2.ClientConn, targetUR
 		return
 	}
 
-	if h.metricsCallback != nil {
-		h.metricsCallback.RecordSuccessWithLatency(latency)
-	}
+	h.RecordLatency(latency)
 }
 
 // executeH2C handles HTTP/2 over cleartext (h2c) - rare but possible
 func (h *H2Flood) executeH2C(ctx context.Context, target Target, parsedURL *url.URL, host string) error {
-	sessionCtx, cancel := context.WithTimeout(ctx, h.maxSessionLife)
+	sessionLifetime := h.GetSessionLifetime()
+	if sessionLifetime == 0 {
+		sessionLifetime = 5 * time.Minute
+	}
+
+	sessionCtx, cancel := context.WithTimeout(ctx, sessionLifetime)
 	defer cancel()
 
 	dialer := &net.Dialer{
-		Timeout:   h.connectionTimeout,
-		LocalAddr: h.bindConfig.GetLocalAddr(),
+		Timeout:   h.Common.ConnectTimeout,
+		LocalAddr: h.GetLocalAddr(),
 	}
 
 	conn, err := dialer.DialContext(sessionCtx, "tcp", host)
@@ -211,10 +224,10 @@ func (h *H2Flood) executeH2C(ctx context.Context, target Target, parsedURL *url.
 		return fmt.Errorf("tcp connection failed: %w", err)
 	}
 
-	atomic.AddInt64(&h.activeConnections, 1)
+	h.IncrementConnections()
 	defer func() {
 		conn.Close()
-		atomic.AddInt64(&h.activeConnections, -1)
+		h.DecrementConnections()
 	}()
 
 	// h2c upgrade transport
@@ -266,12 +279,30 @@ func (h *H2Flood) executeH2C(ctx context.Context, target Target, parsedURL *url.
 	}
 }
 
-func (h *H2Flood) Name() string {
-	return "h2-flood"
+// parseTargetURL parses a URL and returns parsed URL, host:port, and whether TLS is used
+func parseTargetURL(rawURL string) (*url.URL, string, bool, error) {
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, "", false, err
+	}
+
+	useTLS := parsedURL.Scheme == "https"
+	host := parsedURL.Host
+
+	// Add default port if not specified
+	if parsedURL.Port() == "" {
+		if useTLS {
+			host = host + ":443"
+		} else {
+			host = host + ":80"
+		}
+	}
+
+	return parsedURL, host, useTLS, nil
 }
 
-func (h *H2Flood) ActiveConnections() int64 {
-	return atomic.LoadInt64(&h.activeConnections)
+func (h *H2Flood) Name() string {
+	return "h2-flood"
 }
 
 func (h *H2Flood) ActiveStreams() int64 {
@@ -284,8 +315,4 @@ func (h *H2Flood) RequestsSent() int64 {
 
 func (h *H2Flood) StreamFailures() int64 {
 	return atomic.LoadInt64(&h.streamFailures)
-}
-
-func (h *H2Flood) SetMetricsCallback(callback MetricsCallback) {
-	h.metricsCallback = callback
 }

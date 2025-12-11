@@ -14,6 +14,8 @@ High-performance load testing tool with Slowloris attack support and advanced me
   - HTTP Flood (high-volume request flooding)
   - HTTP/2 Flood (multiplexing abuse, stream flooding)
   - Heavy Payload (ReDoS, deep JSON/XML parsing stress)
+  - TCP Flood (connection exhaustion, hold until server closes)
+  - RUDY (R-U-Dead-Yet advanced slow POST with session persistence)
   - HTTPS/TLS support with proper certificate validation
 
 - **Pulsing Load Patterns**
@@ -149,6 +151,7 @@ make build
 | `h2-flood` | HTTP/2 multiplexing flood |
 | `heavy-payload` | Application-layer stress with heavy payloads |
 | `rudy` | R-U-Dead-Yet slow POST with session persistence |
+| `tcp-flood` | TCP connection exhaustion (hold until server closes) |
 
 ## Examples
 
@@ -927,6 +930,65 @@ email=aaaaaa@aaaaaa!
   --payload-size 50000
 ```
 
+### 10. TCP Flood (`--strategy tcp-flood`)
+
+**Purpose:** TCP connection exhaustion attack
+
+**How it works:**
+- Rapidly creates TCP connections to exhaust server connection limits
+- Holds connections open until the server closes them (infinite hold mode)
+- Can optionally send a byte after connection to trigger application-layer processing
+- Uses TCP keep-alive to prevent idle timeouts
+- Minimal bandwidth usage, maximum connection slot consumption
+
+**Technical details:**
+```
+Connection flow:
+1. TCP 3-way handshake (SYN -> SYN-ACK -> ACK)
+2. Optional: Send single byte (0x00)
+3. Hold connection open indefinitely
+4. Monitor for server-initiated close (FIN/RST)
+5. Reconnect immediately when server drops
+
+TCP Options:
+- TCP_NODELAY: true (disable Nagle)
+- SO_KEEPALIVE: true (60s intervals)
+- Hold time: 0 (infinite) or configurable
+```
+
+**Use case:**
+- Testing connection pool limits
+- Exhausting server socket descriptors
+- Testing firewall connection tracking
+- Stress testing load balancers
+- Evaluating connection timeout policies
+
+**Example:**
+```bash
+# Basic TCP flood - hold connections until server closes
+./loadtest \
+  --target http://example.com \
+  --sessions 10000 \
+  --rate 500 \
+  --strategy tcp-flood
+
+# TCP flood with data send (triggers application layer)
+./loadtest \
+  --target https://example.com \
+  --sessions 5000 \
+  --rate 200 \
+  --strategy tcp-flood \
+  --send-data
+
+# TCP flood with session lifetime limit (reconnect after 5 minutes)
+./loadtest \
+  --target http://example.com \
+  --sessions 8000 \
+  --rate 300 \
+  --strategy tcp-flood \
+  --session-lifetime 5m
+```
+
 ### Pulsing Load Patterns
 
 **Purpose:** Stress test auto-scaling systems
@@ -1004,14 +1066,14 @@ Scale DOWN (High -> Low):
 
 ### Strategy Comparison
 
-| Feature | Normal | Keep-Alive | Slowloris | Slow POST | Slow Read | HTTP Flood | H2 Flood | Heavy Payload |
-|---------|--------|------------|-----------|-----------|-----------|------------|----------|---------------|
-| **Request Complete** | Yes | Yes | No | Yes | Yes | Yes | Yes | Yes |
-| **Server Response** | Yes | Yes | No | No | Yes | Yes | Yes | Yes |
-| **Connection Reuse** | No | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| **Resource Exhaustion** | CPU | Connections | Connections | Connections | Memory | CPU/Bandwidth | Streams/CPU | CPU/Parser |
-| **Detection Risk** | Low | Low | High | Medium | Medium | High | Medium | Low |
-| **Best For** | Throughput | Real traffic | Connection pool | Upload endpoints | Large responses | Raw volume | Modern infra | App logic |
+| Feature | Normal | Keep-Alive | Slowloris | Slow POST | Slow Read | HTTP Flood | H2 Flood | Heavy Payload | TCP Flood |
+|---------|--------|------------|-----------|-----------|-----------|------------|----------|---------------|-----------|
+| **Request Complete** | Yes | Yes | No | Yes | Yes | Yes | Yes | Yes | N/A |
+| **Server Response** | Yes | Yes | No | No | Yes | Yes | Yes | Yes | N/A |
+| **Connection Reuse** | No | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| **Resource Exhaustion** | CPU | Connections | Connections | Connections | Memory | CPU/Bandwidth | Streams/CPU | CPU/Parser | Connections |
+| **Detection Risk** | Low | Low | High | Medium | Medium | High | Medium | Low | Medium |
+| **Best For** | Throughput | Real traffic | Connection pool | Upload endpoints | Large responses | Raw volume | Modern infra | App logic | Socket limits |
 
 ### When to Use Each Strategy
 
@@ -1048,6 +1110,13 @@ Scale DOWN (High -> Low):
 - Evaluating WAF/CDN effectiveness
 - Maximum request volume needed
 - Stress testing application logic
+
+**Use TCP Flood when:**
+- Testing connection pool/socket limits
+- Exhausting file descriptors on target
+- Testing firewall connection tracking tables
+- Evaluating load balancer connection limits
+- Minimal bandwidth, maximum connection impact
 
 ## Docker Usage
 

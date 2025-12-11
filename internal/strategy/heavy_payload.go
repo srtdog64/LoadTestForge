@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jdw/loadtestforge/internal/config"
 	"github.com/jdw/loadtestforge/internal/httpdata"
 	"github.com/jdw/loadtestforge/internal/netutil"
 )
@@ -22,14 +23,13 @@ import (
 // - Large XML with entity expansion
 // - Complex query strings
 type HeavyPayload struct {
-	client            *http.Client
-	timeout           time.Duration
-	payloadType       string
-	payloadDepth      int
-	payloadSize       int
-	activeConnections int64
-	requestsSent      int64
-	metricsCallback   MetricsCallback
+	BaseStrategy
+	client       *http.Client
+	timeout      time.Duration
+	payloadType  string
+	payloadDepth int
+	payloadSize  int
+	requestsSent int64
 }
 
 // Payload types
@@ -41,6 +41,7 @@ const (
 	PayloadMultipart  = "multipart"
 )
 
+// NewHeavyPayload creates a new HeavyPayload strategy.
 func NewHeavyPayload(timeout time.Duration, payloadType string, depth int, size int, bindIP string) *HeavyPayload {
 	if depth <= 0 {
 		depth = 50
@@ -49,7 +50,11 @@ func NewHeavyPayload(timeout time.Duration, payloadType string, depth int, size 
 		size = 10000
 	}
 
+	common := DefaultCommonConfig()
+	common.ConnectTimeout = timeout
+
 	h := &HeavyPayload{
+		BaseStrategy: NewBaseStrategy(bindIP, common),
 		timeout:      timeout,
 		payloadType:  payloadType,
 		payloadDepth: depth,
@@ -72,6 +77,17 @@ func NewHeavyPayload(timeout time.Duration, payloadType string, depth int, size 
 	}
 
 	return h
+}
+
+// NewHeavyPayloadWithConfig creates a HeavyPayload strategy from StrategyConfig.
+func NewHeavyPayloadWithConfig(cfg *config.StrategyConfig, bindIP string) *HeavyPayload {
+	return NewHeavyPayload(
+		cfg.Timeout,
+		cfg.PayloadType,
+		cfg.PayloadDepth,
+		cfg.PayloadSize,
+		bindIP,
+	)
 }
 
 func (h *HeavyPayload) Execute(ctx context.Context, target Target) error {
@@ -149,9 +165,7 @@ func (h *HeavyPayload) Execute(ctx context.Context, target Target) error {
 		return fmt.Errorf("http error: %d", resp.StatusCode)
 	}
 
-	if h.metricsCallback != nil {
-		h.metricsCallback.RecordSuccessWithLatency(latency)
-	}
+	h.RecordLatency(latency)
 
 	return nil
 }
@@ -320,14 +334,6 @@ func (h *HeavyPayload) Name() string {
 	return "heavy-payload"
 }
 
-func (h *HeavyPayload) ActiveConnections() int64 {
-	return atomic.LoadInt64(&h.activeConnections)
-}
-
 func (h *HeavyPayload) RequestsSent() int64 {
 	return atomic.LoadInt64(&h.requestsSent)
-}
-
-func (h *HeavyPayload) SetMetricsCallback(callback MetricsCallback) {
-	h.metricsCallback = callback
 }
