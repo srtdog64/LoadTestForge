@@ -26,6 +26,7 @@ type MetricsCallback interface {
 	RecordConnectionEnd(connID string)
 	RecordSocketTimeout()
 	RecordSocketReconnect()
+	RecordConnectionAttempt()
 	RecordSuccessWithLatency(duration time.Duration)
 }
 

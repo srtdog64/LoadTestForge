@@ -23,6 +23,9 @@ type Collector struct {
 	currentSecond     int64
 	currentCount      int
 
+	connectionsPerSecond []int // To track CPS
+	currentConnCount     int   // Current second connection attempts
+
 	connectionLifetimes []time.Duration
 	activeConnections   map[string]*ConnectionInfo
 
@@ -42,11 +45,12 @@ type ConnectionInfo struct {
 
 func NewCollector() *Collector {
 	c := &Collector{
-		requestsPerSecond:   make([]int, 0, 3600),
-		connectionLifetimes: make([]time.Duration, 0, 10000),
-		activeConnections:   make(map[string]*ConnectionInfo),
-		latencies:           make([]int64, 0, 100000),
-		stopChan:            make(chan struct{}),
+		requestsPerSecond:    make([]int, 0, 3600),
+		connectionsPerSecond: make([]int, 0, 3600),
+		connectionLifetimes:  make([]time.Duration, 0, 10000),
+		activeConnections:    make(map[string]*ConnectionInfo),
+		latencies:            make([]int64, 0, 100000),
+		stopChan:             make(chan struct{}),
 	}
 	go c.recordLoop()
 	return c
@@ -112,6 +116,13 @@ func (c *Collector) RecordSocketReconnect() {
 	atomic.AddInt64(&c.socketReconnects, 1)
 }
 
+// RecordConnectionAttempt records a new connection attempt for CPS tracking.
+func (c *Collector) RecordConnectionAttempt() {
+	c.mu.Lock()
+	c.currentConnCount++
+	c.mu.Unlock()
+}
+
 func (c *Collector) RecordConnectionStart(connID, remoteAddr string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -139,6 +150,13 @@ func (c *Collector) RecordConnectionEnd(connID string) {
 	if info, exists := c.activeConnections[connID]; exists {
 		lifetime := time.Since(info.StartTime)
 		c.connectionLifetimes = append(c.connectionLifetimes, lifetime)
+		// Windowing: Keep last 10000 connections
+		if len(c.connectionLifetimes) > 10000 {
+			// Remove oldest (simple truncation to avoid O(N) shift if we just want samples)
+			// Or shift if we want strict history. Slicing is O(1) effectively but allocation might happen on append.
+			// Let's keep strict window.
+			c.connectionLifetimes = c.connectionLifetimes[1:]
+		}
 		delete(c.activeConnections, connID)
 	}
 }
@@ -153,8 +171,21 @@ func (c *Collector) recordLoop() {
 			return
 		case <-ticker.C:
 			c.mu.Lock()
+			// Record RPS
 			c.requestsPerSecond = append(c.requestsPerSecond, c.currentCount)
+			// Windowing: Keep fast 3600 seconds (1 hour)
+			if len(c.requestsPerSecond) > 3600 {
+				c.requestsPerSecond = c.requestsPerSecond[len(c.requestsPerSecond)-3600:]
+			}
 			c.currentCount = 0
+
+			// Record CPS
+			c.connectionsPerSecond = append(c.connectionsPerSecond, c.currentConnCount)
+			// Windowing: Keep last 3600 seconds
+			if len(c.connectionsPerSecond) > 3600 {
+				c.connectionsPerSecond = c.connectionsPerSecond[len(c.connectionsPerSecond)-3600:]
+			}
+			c.currentConnCount = 0
 			c.mu.Unlock()
 		}
 	}
@@ -183,7 +214,13 @@ type Stats struct {
 	P50              int
 	P95              int
 	P99              int
-	SuccessRate      float64
+
+	// Connection statistics (CPS)
+	AvgConnPerSec float64
+	MaxConnPerSec int
+	MinConnPerSec int
+
+	SuccessRate float64
 	// Latency percentiles (microseconds)
 	LatencyEnabled bool
 	LatencyP50     int64
@@ -228,6 +265,10 @@ func (c *Collector) GetStats() Stats {
 		stats.StdDev = c.calculateStdDev(stats.AvgPerSec)
 		stats.MinPerSec, stats.MaxPerSec = c.calculateMinMax()
 		stats.P50, stats.P95, stats.P99 = c.calculatePercentiles()
+	}
+
+	if len(c.connectionsPerSecond) > 0 {
+		stats.AvgConnPerSec, stats.MinConnPerSec, stats.MaxConnPerSec = c.calculateConnStats()
 	}
 
 	if len(c.connectionLifetimes) > 0 {
@@ -345,6 +386,29 @@ func (c *Collector) calculatePercentiles() (int, int, int) {
 	p99 := percentile(sorted, 99)
 
 	return p50, p95, p99
+}
+
+func (c *Collector) calculateConnStats() (float64, int, int) {
+	if len(c.connectionsPerSecond) == 0 {
+		return 0, 0, 0
+	}
+
+	var sum int
+	min := c.connectionsPerSecond[0]
+	max := c.connectionsPerSecond[0]
+
+	for _, v := range c.connectionsPerSecond {
+		sum += v
+		if v < min {
+			min = v
+		}
+		if v > max {
+			max = v
+		}
+	}
+
+	avg := float64(sum) / float64(len(c.connectionsPerSecond))
+	return avg, min, max
 }
 
 func (c *Collector) calculateConnectionLifetimes() (time.Duration, time.Duration, time.Duration) {

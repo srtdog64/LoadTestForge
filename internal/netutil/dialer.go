@@ -18,6 +18,7 @@ type DialerConfig struct {
 	LocalAddr     *net.TCPAddr // Legacy single IP
 	BindConfig    *BindConfig  // Multi-IP support
 	TLSSkipVerify bool
+	OnDial        func() // Callback for connection attempts
 }
 
 // DefaultDialerConfig returns sensible defaults for dialer configuration.
@@ -76,6 +77,10 @@ func NewTrackedTransport(cfg DialerConfig, counter *int64) *http.Transport {
 			Timeout:   cfg.Timeout,
 			KeepAlive: cfg.KeepAlive,
 			LocalAddr: cfg.GetLocalAddr(),
+		}
+
+		if cfg.OnDial != nil {
+			cfg.OnDial()
 		}
 
 		conn, err := dialer.DialContext(ctx, network, addr)

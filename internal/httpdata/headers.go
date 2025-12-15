@@ -3,6 +3,7 @@ package httpdata
 import (
 	"fmt"
 	"math/rand"
+	"net/http"
 	"net/url"
 	"strings"
 )
@@ -512,6 +513,16 @@ func (e *EvasionHeaderGenerator) AddEvasionHeadersToSet(hs *HeaderSet) {
 		parts := strings.SplitN(h, ": ", 2)
 		if len(parts) == 2 {
 			hs.Add(parts[0], parts[1])
+		}
+	}
+}
+
+// ApplyEvasionHeaders applies evasion headers directly to an http.Request.
+func (e *EvasionHeaderGenerator) ApplyEvasionHeaders(req *http.Request) {
+	for _, h := range e.GenerateEvasionHeaders() {
+		parts := strings.SplitN(h, ": ", 2)
+		if len(parts) == 2 {
+			req.Header.Set(parts[0], parts[1])
 		}
 	}
 }

@@ -259,8 +259,32 @@ func (m *Manager) calculatePulseTarget(isHigh bool, elapsed time.Duration) int {
 }
 
 func (m *Manager) runSteadyState(ctx context.Context) error {
-	// No ramp-up: spawn all sessions immediately without rate limiting
-	m.spawnSessionsImmediate(ctx, m.perf.TargetSessions)
+	// No ramp-up: spawn all sessions immediately but respect rate limit
+	// We use a loop here because spawnSessions limits per tick.
+	remaining := m.perf.TargetSessions
+	for remaining > 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		// Calculate how many we can spawn in 1 second (or tick) to respect rate
+		// Actually, let's just use spawnSessions logic in a tight loop or just use limiter directly
+		batch := m.perf.SessionsPerSec
+		if batch > remaining {
+			batch = remaining
+		}
+
+		// Create batch
+		for i := 0; i < batch; i++ {
+			if err := m.limiter.Wait(ctx); err != nil {
+				return err
+			}
+			go m.launchSession(ctx)
+		}
+		remaining -= batch
+	}
 
 	tickInterval := config.SessionTickInterval
 	ticker := time.NewTicker(tickInterval)
@@ -275,14 +299,15 @@ func (m *Manager) runSteadyState(ctx context.Context) error {
 			// Maintain target sessions (replace dead ones)
 			current := int(atomic.LoadInt32(&m.activeSessions))
 			if current < m.perf.TargetSessions {
-				m.spawnSessionsImmediate(ctx, m.perf.TargetSessions-current)
+				// Use spawnSessions instead of spawnSessionsImmediate to respect rate limit
+				m.spawnSessions(ctx, m.perf.TargetSessions-current, tickInterval)
 			}
 		}
 	}
 }
 
-// spawnSessionsImmediate spawns sessions without rate limiting.
-// Used when no ramp-up is configured for immediate target achievement.
+// spawnSessionsImmediate is deprecated in favor of rate-limited spawning.
+// kept for reference or specialized use cases where burst is explicitly desired.
 func (m *Manager) spawnSessionsImmediate(ctx context.Context, count int) {
 	for i := 0; i < count; i++ {
 		select {

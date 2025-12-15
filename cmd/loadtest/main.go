@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math/rand"
 	"net"
 	"net/url"
 	"os"
@@ -21,6 +22,9 @@ import (
 )
 
 func main() {
+	// Seed random number generator
+	rand.Seed(time.Now().UnixNano())
+
 	cfg := parseFlags()
 
 	if err := validateConfig(cfg); err != nil {
@@ -247,11 +251,95 @@ func createStrategy(cfg *config.Config) strategy.AttackStrategy {
 	return factory.Create()
 }
 
-// parseBindIPs parses comma/space/semicolon separated IP list.
+// parseBindIPs parses comma/space/semicolon separated IP list and ranges (e.g. 192.168.1.10-20).
 func parseBindIPs(s string) []string {
-	return strings.FieldsFunc(s, func(c rune) bool {
+	// First split by delimiters
+	parts := strings.FieldsFunc(s, func(c rune) bool {
 		return c == ',' || c == ' ' || c == ';'
 	})
+
+	var ips []string
+	for _, part := range parts {
+		if strings.Contains(part, "-") {
+			// Handle range: 192.168.1.10-20 or 192.168.1.10-192.168.1.20
+			ranges := strings.Split(part, "-")
+			if len(ranges) != 2 {
+				continue // invalid range format
+			}
+			startIPStr := strings.TrimSpace(ranges[0])
+			endRangeStr := strings.TrimSpace(ranges[1])
+
+			startIP := net.ParseIP(startIPStr)
+			if startIP == nil {
+				continue
+			}
+			startIPv4 := startIP.To4()
+			if startIPv4 == nil {
+				continue // IPv6 range not supported yet
+			}
+
+			// Check if end part is full IP or just last octet
+			var endIP net.IP
+			if strings.Contains(endRangeStr, ".") {
+				endIP = net.ParseIP(endRangeStr)
+			} else {
+				// Treat as last octet
+				var endOctet int
+				_, err := fmt.Sscanf(endRangeStr, "%d", &endOctet)
+				if err != nil {
+					continue
+				}
+				endIP = make(net.IP, len(startIPv4))
+				copy(endIP, startIPv4)
+				endIP[3] = byte(endOctet)
+			}
+
+			// Check valid endIP
+			endIPv4 := endIP.To4()
+			if endIPv4 == nil {
+				continue
+			}
+
+			// Generate IPs
+			// Simplified approach: iterate from start to end (assuming /24 subnet for safety)
+			// Properly incrementing IP
+			curr := make(net.IP, len(startIPv4))
+			copy(curr, startIPv4)
+
+			for {
+				// Compare current vs end
+				if bytesCompare(curr, endIPv4) > 0 {
+					break
+				}
+				ips = append(ips, curr.String())
+
+				// Increment IP
+				for i := 3; i >= 0; i-- {
+					curr[i]++
+					if curr[i] > 0 {
+						break
+					}
+				}
+			}
+
+		} else {
+			// Single IP
+			ips = append(ips, part)
+		}
+	}
+	return ips
+}
+
+func bytesCompare(a, b []byte) int {
+	for i := 0; i < len(a) && i < len(b); i++ {
+		if a[i] < b[i] {
+			return -1
+		}
+		if a[i] > b[i] {
+			return 1
+		}
+	}
+	return 0
 }
 
 // confirmPublicTarget checks if the target is a public IP and asks for user confirmation.

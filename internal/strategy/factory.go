@@ -63,6 +63,9 @@ func (f *StrategyFactory) CreateByType(strategyType string) AttackStrategy {
 			f.BindIP,
 		)
 
+	case "hulk":
+		return NewHULK(f.Config, f.BindIP)
+
 	case "rudy":
 		rudyCfg := RUDYConfig{
 			ContentLength:         f.Config.ContentLength,
@@ -112,6 +115,7 @@ func AvailableStrategies() []StrategyInfo {
 		{Name: "http-flood", Description: "High-volume HTTP request flood"},
 		{Name: "h2-flood", Description: "HTTP/2 multiplexed stream flood"},
 		{Name: "heavy-payload", Description: "CPU-intensive payload attacks (JSON/XML/ReDoS)"},
+		{Name: "hulk", Description: "Enhanced HULK - Dynamic evasion & flood"},
 		{Name: "rudy", Description: "R.U.D.Y. attack - advanced slow POST with evasion"},
 		{Name: "tcp-flood", Description: "TCP Connection Flood - exhaust server connection limits"},
 	}
@@ -136,6 +140,7 @@ func ValidateStrategyType(strategyType string) error {
 		"http-flood":          true,
 		"h2-flood":            true,
 		"heavy-payload":       true,
+		"hulk":                true,
 		"rudy":                true,
 		"tcp-flood":           true,
 	}
@@ -167,7 +172,12 @@ func StrategyDefaults(strategyType string) map[string]interface{} {
 	case "heavy-payload":
 		defaults["payload-type"] = config.PayloadTypeDeepJSON
 		defaults["payload-depth"] = config.DefaultPayloadDepth
+		defaults["payload-depth"] = config.DefaultPayloadDepth
 		defaults["payload-size"] = config.DefaultPayloadSize
+
+	case "hulk":
+		defaults["timeout"] = config.DefaultConnectTimeout
+		defaults["requests-per-conn"] = config.DefaultRequestsPerConn
 
 	case "rudy":
 		defaults["chunk-delay-min"] = config.DefaultChunkDelayMin
@@ -212,6 +222,7 @@ func IsFloodAttack(strategyType string) bool {
 		"http-flood":    true,
 		"h2-flood":      true,
 		"heavy-payload": true,
+		"hulk":          true,
 		"tcp-flood":     true,
 	}
 	return floodAttacks[strategyType]
@@ -261,7 +272,14 @@ func EstimateResourceUsage(strategyType string, sessions int, duration time.Dura
 	case "heavy-payload":
 		estimate.EstimatedConns = sessions
 		estimate.EstimatedMemMB = float64(sessions) * 1.0 // Large payloads
+		estimate.EstimatedConns = sessions
+		estimate.EstimatedMemMB = float64(sessions) * 1.0 // Large payloads
 		estimate.EstimatedBandwidth = "10-50 Mbps"
+
+	case "hulk":
+		estimate.EstimatedConns = sessions
+		estimate.EstimatedMemMB = float64(sessions) * 0.3
+		estimate.EstimatedBandwidth = "10-200 Mbps"
 
 	case "tcp-flood":
 		estimate.EstimatedConns = sessions
