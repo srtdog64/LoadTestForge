@@ -31,8 +31,8 @@ type StrategyConfig struct {
 	PostDataSize      int
 	RequestsPerConn   int
 	// H2 Flood settings
-	MaxStreams  int
-	BurstSize   int
+	MaxStreams int
+	BurstSize  int
 	// Heavy Payload settings
 	PayloadType  string
 	PayloadDepth int
@@ -43,7 +43,7 @@ type StrategyConfig struct {
 	ChunkSizeMin     int
 	ChunkSizeMax     int
 	PersistConn      bool
-	MaxReqPerSession int           // 0 = unlimited (hold until server closes)
+	MaxReqPerSession int // 0 = unlimited (hold until server closes)
 	KeepAliveTimeout time.Duration
 	SessionLifetime  time.Duration // 0 = unlimited (hold until server closes)
 	SendBufferSize   int
@@ -59,6 +59,8 @@ type StrategyConfig struct {
 	TCPKeepAlive      bool // Enable TCP keep-alive (tcp-flood)
 	// TLS settings
 	TLSSkipVerify bool // Skip TLS certificate verification (default: true for testing)
+	// Network settings
+	BindRandom bool // Randomize source IP selection from pool (vs round-robin)
 }
 
 type PulseConfig struct {

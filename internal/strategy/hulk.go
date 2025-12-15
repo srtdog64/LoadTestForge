@@ -39,6 +39,9 @@ func NewHULK(cfg *config.StrategyConfig, bindIP string) *HULK {
 		config:       cfg,
 		bindIP:       bindIP,
 	}
+	if h.BindConfig != nil {
+		h.BindConfig.Random = cfg.BindRandom
+	}
 
 	// Initial client setup (without metrics)
 	h.rebuildClient()

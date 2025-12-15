@@ -3,6 +3,8 @@ package netutil
 import (
 	"net"
 	"sync/atomic"
+
+	"github.com/srtdog64/loadtestforge/internal/randutil"
 )
 
 // NewLocalTCPAddr creates a TCP address for binding outbound connections.
@@ -115,6 +117,17 @@ func (p *IPPool) NextAddr() *net.TCPAddr {
 	return p.addrs[idx%uint64(len(p.addrs))]
 }
 
+// GetRandomAddr returns a random TCP address from the pool.
+// Thread-safe and high-performance using randutil.
+func (p *IPPool) GetRandomAddr() *net.TCPAddr {
+	if p == nil || len(p.addrs) == 0 {
+		return nil
+	}
+
+	idx := randutil.Intn(len(p.addrs))
+	return p.addrs[idx]
+}
+
 // Get returns IP at specific index (for worker assignment).
 func (p *IPPool) Get(index int) net.IP {
 	if p == nil || len(p.ips) == 0 {
@@ -184,9 +197,10 @@ func splitIPs(s string) []string {
 
 // BindConfig holds binding configuration for connections.
 type BindConfig struct {
-	Pool      *IPPool
-	SingleIP  string
-	counter   uint64
+	Pool     *IPPool
+	SingleIP string
+	counter  uint64
+	Random   bool
 }
 
 // NewBindConfig creates a binding configuration.
@@ -202,13 +216,16 @@ func NewBindConfig(bindIPs string) *BindConfig {
 }
 
 // GetLocalAddr returns the next local address for binding.
-// Thread-safe round-robin for multiple IPs.
+// Supports round-robin (default) or random selection.
 func (b *BindConfig) GetLocalAddr() *net.TCPAddr {
 	if b == nil {
 		return nil
 	}
 
 	if b.Pool != nil {
+		if b.Random {
+			return b.Pool.GetRandomAddr()
+		}
 		return b.Pool.NextAddr()
 	}
 

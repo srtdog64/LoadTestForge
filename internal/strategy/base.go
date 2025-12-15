@@ -125,7 +125,11 @@ func NewBaseStrategySimple(bindIP string, enableStealth, randomizePath bool) Bas
 
 // NewBaseStrategyFromConfig creates a BaseStrategy from StrategyConfig.
 func NewBaseStrategyFromConfig(cfg *config.StrategyConfig, bindIP string) BaseStrategy {
-	return NewBaseStrategy(bindIP, CommonConfigFromStrategyConfig(cfg))
+	b := NewBaseStrategy(bindIP, CommonConfigFromStrategyConfig(cfg))
+	if b.BindConfig != nil {
+		b.BindConfig.Random = cfg.BindRandom
+	}
+	return b
 }
 
 // SetMetricsCallback sets the metrics callback for telemetry.

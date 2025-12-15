@@ -130,6 +130,7 @@ func parseFlags() *config.Config {
 	flag.StringVar(&cfg.Target.Method, "method", "GET", "HTTP method")
 	flag.StringVar(&cfg.Strategy.Type, "strategy", "keepalive", "Attack strategy (normal|keepalive|slowloris|slowloris-keepalive|slow-post|slow-read|http-flood|h2-flood|heavy-payload|rudy|tcp-flood)")
 	flag.StringVar(&cfg.BindIP, "bind-ip", "", "Source IP address(es) to bind, comma-separated for multiple (e.g., 192.168.1.100,192.168.1.101)")
+	flag.BoolVar(&cfg.Strategy.BindRandom, "bind-random", false, "Randomize source IP selection from the bind range (default: round-robin)")
 
 	// Performance settings
 	flag.IntVar(&cfg.Performance.TargetSessions, "sessions", config.DefaultTargetSessions, "Target concurrent sessions")
