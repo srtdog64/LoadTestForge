@@ -16,10 +16,10 @@ import (
 
 // TCPFloodConfig holds configuration for TCP Connection Flood attack.
 type TCPFloodConfig struct {
-	Common         CommonConfig  // Embedded common configuration
-	HoldTime       time.Duration // 0 = infinite (hold until server closes)
-	SendData       bool          // Send a byte after connection
-	KeepAlive      bool          // Enable TCP keep-alive
+	Common    CommonConfig  // Embedded common configuration
+	HoldTime  time.Duration // 0 = infinite (hold until server closes)
+	SendData  bool          // Send a byte after connection
+	KeepAlive bool          // Enable TCP keep-alive
 }
 
 // DefaultTCPFloodConfig returns sensible defaults for TCP Flood.
@@ -213,6 +213,8 @@ func (t *TCPFlood) dialWithOptions(ctx context.Context, host string, useTLS bool
 
 	var conn net.Conn
 	var err error
+
+	t.OnDial() // Record connection attempt
 
 	if useTLS {
 		tlsConfig := &tls.Config{

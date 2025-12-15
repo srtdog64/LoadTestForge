@@ -30,13 +30,10 @@ func NewNormalHTTP(timeout time.Duration, bindIP string) *NormalHTTP {
 		timeout:      timeout,
 	}
 
-	dialerCfg := netutil.DialerConfig{
-		Timeout:       config.DefaultDialerTimeout,
-		KeepAlive:     config.DefaultDialerKeepAlive,
-		LocalAddr:     netutil.NewLocalTCPAddr(bindIP),
-		BindConfig:    netutil.NewBindConfig(bindIP),
-		TLSSkipVerify: false,
-	}
+	// Use standardized DialerConfig with OnDial hook from BaseStrategy
+	dialerCfg := n.GetDialerConfig()
+	dialerCfg.Timeout = config.DefaultDialerTimeout
+	dialerCfg.KeepAlive = config.DefaultDialerKeepAlive
 
 	transport := netutil.NewTrackedTransport(dialerCfg, &n.activeConnections)
 	transport.MaxIdleConns = 0

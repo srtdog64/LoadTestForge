@@ -48,21 +48,15 @@ func NewHULK(cfg *config.StrategyConfig, bindIP string) *HULK {
 
 func (h *HULK) SetMetricsCallback(callback MetricsCallback) {
 	h.metrics = callback
+	h.BaseStrategy.SetMetricsCallback(callback)
 	h.rebuildClient()
 }
 
 func (h *HULK) rebuildClient() {
-	dialerCfg := netutil.DialerConfig{
-		Timeout:       h.config.Timeout,
-		KeepAlive:     config.DefaultDialerKeepAlive,
-		LocalAddr:     netutil.NewLocalTCPAddr(h.bindIP),
-		BindConfig:    netutil.NewBindConfig(h.bindIP),
-		TLSSkipVerify: true,
-	}
-
-	if h.metrics != nil {
-		dialerCfg.OnDial = h.metrics.RecordConnectionAttempt
-	}
+	// Use standardized DialerConfig from BaseStrategy
+	dialerCfg := h.GetDialerConfig()
+	dialerCfg.Timeout = h.config.Timeout
+	dialerCfg.KeepAlive = config.DefaultDialerKeepAlive
 
 	// Use TrackedTransport to monitor active connections (using BaseStrategy's counter)
 	trackedTransport := netutil.NewTrackedTransport(dialerCfg, &h.activeConnections)

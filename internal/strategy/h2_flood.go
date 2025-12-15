@@ -90,6 +90,7 @@ func (h *H2Flood) Execute(ctx context.Context, target Target) error {
 		LocalAddr: h.GetLocalAddr(),
 	}
 
+	h.OnDial() // Record connection attempt
 	netConn, err := dialer.DialContext(sessionCtx, "tcp", host)
 	if err != nil {
 		return errors.ClassifyAndWrap(err, "tcp connection failed")
@@ -224,6 +225,7 @@ func (h *H2Flood) executeH2C(ctx context.Context, target Target, parsedURL *url.
 		LocalAddr: h.GetLocalAddr(),
 	}
 
+	h.OnDial() // Record connection attempt
 	conn, err := dialer.DialContext(sessionCtx, "tcp", host)
 	if err != nil {
 		return errors.ClassifyAndWrap(err, "tcp connection failed")

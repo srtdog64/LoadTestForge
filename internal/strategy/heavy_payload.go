@@ -73,18 +73,10 @@ func NewHeavyPayload(timeout time.Duration, payloadType string, depth int, size 
 
 // rebuildClient rebuilds the HTTP client with current metrics callback.
 func (h *HeavyPayload) rebuildClient() {
-	dialerCfg := netutil.DialerConfig{
-		Timeout:       config.DefaultDialerTimeout,
-		KeepAlive:     config.DefaultDialerKeepAlive,
-		LocalAddr:     netutil.NewLocalTCPAddr(h.bindIP),
-		BindConfig:    netutil.NewBindConfig(h.bindIP),
-		TLSSkipVerify: true,
-	}
-
-	// Add OnDial hook if metrics callback is set
-	if h.metrics != nil {
-		dialerCfg.OnDial = h.metrics.RecordConnectionAttempt
-	}
+	// Use standardized DialerConfig from BaseStrategy
+	dialerCfg := h.GetDialerConfig()
+	dialerCfg.Timeout = config.DefaultDialerTimeout
+	dialerCfg.KeepAlive = config.DefaultDialerKeepAlive
 
 	transport := netutil.NewTrackedTransport(dialerCfg, &h.activeConnections)
 
@@ -361,6 +353,7 @@ func (h *HeavyPayload) RequestsSent() int64 {
 
 func (h *HeavyPayload) SetMetricsCallback(callback MetricsCallback) {
 	h.metrics = callback
+	h.BaseStrategy.SetMetricsCallback(callback)
 	h.rebuildClient()
 }
 

@@ -178,14 +178,33 @@ func (b *BaseStrategy) IsPathRandomized() bool {
 	return b.Common.RandomizePath
 }
 
+// OnDial is the standard hook for recording connection attempts.
+func (b *BaseStrategy) OnDial() {
+	if b.metricsCallback != nil {
+		b.metricsCallback.RecordConnectionAttempt()
+	}
+}
+
 // GetConnConfig returns the ConnConfig for DialManaged with OnDial hook.
 func (b *BaseStrategy) GetConnConfig() netutil.ConnConfig {
 	cfg := b.connConfig
 	// Add OnDial hook for CPS tracking if metrics callback is set
 	if b.metricsCallback != nil {
-		cfg.OnDial = b.metricsCallback.RecordConnectionAttempt
+		cfg.OnDial = b.OnDial
 	}
 	return cfg
+}
+
+// GetDialerConfig returns a DialerConfig populated from the strategy's configuration and hooks.
+func (b *BaseStrategy) GetDialerConfig() netutil.DialerConfig {
+	return netutil.DialerConfig{
+		Timeout:       b.Common.ConnectTimeout,
+		KeepAlive:     b.Common.KeepAliveInterval,
+		LocalAddr:     b.connConfig.LocalAddr,
+		BindConfig:    b.BindConfig,
+		TLSSkipVerify: b.Common.TLSSkipVerify,
+		OnDial:        b.OnDial,
+	}
 }
 
 // GetKeepAliveInterval returns the keep-alive interval.
@@ -246,6 +265,8 @@ func (b *BaseStrategy) RecordReconnect() {
 
 // DialTCP establishes a TCP connection with the configured binding.
 func (b *BaseStrategy) DialTCP(ctx context.Context, network, address string, timeout time.Duration) (net.Conn, error) {
+	// Call OnDial hook for CPS tracking
+	b.OnDial()
 	return netutil.DialWithConfig(ctx, network, address, timeout, b.BindConfig)
 }
 

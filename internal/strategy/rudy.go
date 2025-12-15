@@ -500,6 +500,9 @@ func (r *RUDY) dialWithOptions(ctx context.Context, host string, useTLS bool, ho
 	dialCtx, cancel := context.WithTimeout(ctx, r.config.ConnectTimeout)
 	defer cancel()
 
+	// Record connection attempt via OnDial hook
+	r.OnDial()
+
 	var conn net.Conn
 	var err error
 
