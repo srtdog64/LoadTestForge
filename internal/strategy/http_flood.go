@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"math/rand"
 	"net/http"
 	"net/url"
 	"sync/atomic"
@@ -17,6 +16,7 @@ import (
 	"github.com/srtdog64/loadtestforge/internal/errors"
 	"github.com/srtdog64/loadtestforge/internal/httpdata"
 	"github.com/srtdog64/loadtestforge/internal/netutil"
+	"github.com/srtdog64/loadtestforge/internal/randutil"
 )
 
 // HTTPFlood implements high-volume HTTP request flooding.
@@ -146,7 +146,7 @@ func (h *HTTPFlood) sendRequest(ctx context.Context, target Target, parsedURL *u
 	if h.IsPathRandomized() {
 		targetURL = h.generateRealisticURL(parsedURL)
 	} else {
-		targetURL = fmt.Sprintf("%s?r=%d&cb=%d", target.URL, rand.Intn(100000000), rand.Intn(1000000))
+		targetURL = fmt.Sprintf("%s?r=%d&cb=%d", target.URL, randutil.Intn(100000000), randutil.Intn(1000000))
 	}
 
 	req, err := http.NewRequestWithContext(reqCtx, h.method, targetURL, body)
@@ -199,23 +199,27 @@ func (h *HTTPFlood) applyRandomHeaders(req *http.Request) {
 	req.Header.Set("Cache-Control", httpdata.RandomCacheControl())
 	req.Header.Set("Connection", "keep-alive")
 
+	// Use pooled rand for high CPS to avoid global rand lock contention
+	rng := randutil.Get()
+	defer rng.Release()
+
 	// 40% probability: Add X-Forwarded-For header
-	if rand.Float32() < 0.4 {
+	if rng.Float32() < 0.4 {
 		req.Header.Set("X-Forwarded-For", httpdata.RandomFakeIP())
 	}
 
 	// 30% probability: Add random session cookie
-	if rand.Float32() < 0.3 {
-		req.Header.Set("Cookie", h.cookiePool[rand.Intn(len(h.cookiePool))])
+	if rng.Float32() < 0.3 {
+		req.Header.Set("Cookie", h.cookiePool[rng.Intn(len(h.cookiePool))])
 	}
 
 	// 20% probability: Add X-Requested-With (AJAX request)
-	if rand.Float32() < 0.2 {
+	if rng.Float32() < 0.2 {
 		req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	}
 
 	// 15% probability: Add DNT header
-	if rand.Float32() < 0.15 {
+	if rng.Float32() < 0.15 {
 		req.Header.Set("DNT", "1")
 	}
 }
@@ -234,13 +238,17 @@ func (h *HTTPFlood) applyStealthHeaders(req *http.Request) {
 	req.Header.Set("Sec-CH-UA-Mobile", httpdata.RandomMobile())
 	req.Header.Set("Sec-CH-UA-Platform", fmt.Sprintf(`"%s"`, httpdata.RandomPlatform()))
 
+	// Use pooled rand for high CPS
+	rng := randutil.Get()
+	defer rng.Release()
+
 	// 50% probability: Add X-Forwarded-For (IP spoofing)
-	if rand.Float32() < 0.5 {
+	if rng.Float32() < 0.5 {
 		req.Header.Set("X-Forwarded-For", httpdata.RandomFakeIP())
 	}
 
 	// 30% probability: Add X-Real-IP
-	if rand.Float32() < 0.3 {
+	if rng.Float32() < 0.3 {
 		req.Header.Set("X-Real-IP", httpdata.RandomFakeIP())
 	}
 }
@@ -252,24 +260,28 @@ func (h *HTTPFlood) generateRealisticURL(baseURL *url.URL) string {
 	u := *baseURL
 	q := u.Query()
 
+	// Use pooled rand for high CPS
+	rng := randutil.Get()
+	defer rng.Release()
+
 	q.Set("_", fmt.Sprintf("%d", time.Now().UnixMilli()))
-	q.Set("r", fmt.Sprintf("%d", rand.Intn(1000000)))
-	q.Set("v", fmt.Sprintf("%d", rand.Intn(100)+1))
+	q.Set("r", fmt.Sprintf("%d", rng.Intn(1000000)))
+	q.Set("v", fmt.Sprintf("%d", rng.Intn(100)+1))
 	q.Set("ref", httpdata.RandomRefSource())
 
 	cacheOptions := []string{"true", "false"}
-	q.Set("cache", cacheOptions[rand.Intn(len(cacheOptions))])
+	q.Set("cache", cacheOptions[rng.Intn(len(cacheOptions))])
 
-	if rand.Float32() < 0.2 {
-		q.Set("user_id", fmt.Sprintf("%d", rand.Intn(9000)+1000))
+	if rng.Float32() < 0.2 {
+		q.Set("user_id", fmt.Sprintf("%d", rng.Intn(9000)+1000))
 		q.Set("device", httpdata.RandomDeviceType())
 	}
 
-	if rand.Float32() < 0.15 {
+	if rng.Float32() < 0.15 {
 		q.Set("session", httpdata.GenerateSessionID())
 	}
 
-	if rand.Float32() < 0.1 {
+	if rng.Float32() < 0.1 {
 		q.Set("utm_source", httpdata.RandomUTMSource())
 	}
 
@@ -280,8 +292,13 @@ func (h *HTTPFlood) generateRealisticURL(baseURL *url.URL) string {
 func (h *HTTPFlood) generatePostData() []byte {
 	chars := "abcdefghijklmnopqrstuvwxyz0123456789"
 	data := make([]byte, h.postDataSize)
+
+	// Use pooled rand for high CPS
+	rng := randutil.Get()
+	defer rng.Release()
+
 	for i := range data {
-		data[i] = chars[rand.Intn(len(chars))]
+		data[i] = chars[rng.Intn(len(chars))]
 	}
 	return data
 }

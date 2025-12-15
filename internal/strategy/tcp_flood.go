@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/srtdog64/loadtestforge/internal/config"
+	"github.com/srtdog64/loadtestforge/internal/errors"
 	"github.com/srtdog64/loadtestforge/internal/netutil"
 )
 
@@ -159,14 +160,14 @@ func NewTCPFloodWithConfig(cfg *config.StrategyConfig, bindIP string) *TCPFlood 
 func (t *TCPFlood) Execute(ctx context.Context, target Target) error {
 	parsedURL, host, useTLS, err := netutil.ParseTargetURL(target.URL)
 	if err != nil {
-		return err
+		return errors.ClassifyAndWrap(err, "invalid URL")
 	}
 
 	conn, err := t.dialWithOptions(ctx, host, useTLS, parsedURL.Hostname())
 	if err != nil {
 		t.stats.RecordError(err, "connect")
 		atomic.AddInt64(&t.stats.Failed, 1)
-		return err
+		return errors.ClassifyAndWrap(err, "connection failed")
 	}
 
 	connectTime := time.Now()

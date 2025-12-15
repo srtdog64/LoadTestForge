@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
-	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
@@ -16,6 +15,7 @@ import (
 	"github.com/srtdog64/loadtestforge/internal/errors"
 	"github.com/srtdog64/loadtestforge/internal/httpdata"
 	"github.com/srtdog64/loadtestforge/internal/netutil"
+	"github.com/srtdog64/loadtestforge/internal/randutil"
 
 	"golang.org/x/net/http2"
 )
@@ -169,7 +169,10 @@ func (h *H2Flood) sendStream(ctx context.Context, cc *http2.ClientConn, targetUR
 	defer cancel()
 
 	// Create request with random parameters to bypass caching
-	url := fmt.Sprintf("%s?r=%d&t=%d", targetURL, rand.Intn(100000000), time.Now().UnixNano())
+	// Use pooled rand for high CPS
+	rng := randutil.Get()
+	url := fmt.Sprintf("%s?r=%d&t=%d", targetURL, rng.Intn(100000000), time.Now().UnixNano())
+	rng.Release()
 
 	req, err := http.NewRequestWithContext(reqCtx, "GET", url, nil)
 	if err != nil {

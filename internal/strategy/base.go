@@ -178,9 +178,14 @@ func (b *BaseStrategy) IsPathRandomized() bool {
 	return b.Common.RandomizePath
 }
 
-// GetConnConfig returns the cached ConnConfig for DialManaged.
+// GetConnConfig returns the ConnConfig for DialManaged with OnDial hook.
 func (b *BaseStrategy) GetConnConfig() netutil.ConnConfig {
-	return b.connConfig
+	cfg := b.connConfig
+	// Add OnDial hook for CPS tracking if metrics callback is set
+	if b.metricsCallback != nil {
+		cfg.OnDial = b.metricsCallback.RecordConnectionAttempt
+	}
+	return cfg
 }
 
 // GetKeepAliveInterval returns the keep-alive interval.

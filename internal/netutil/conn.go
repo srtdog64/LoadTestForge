@@ -19,6 +19,7 @@ type ConnConfig struct {
 	BindConfig     *BindConfig   // Multi-IP support
 	WindowSize     int           // TCP receive buffer size (0 = default)
 	TLSSkipVerify  bool          // Skip TLS certificate verification
+	OnDial         func()        // Called on each dial attempt for CPS tracking
 }
 
 // DefaultConnConfig returns sensible defaults.
@@ -77,6 +78,11 @@ func DialManaged(
 	dialer := &net.Dialer{
 		Timeout:   cfg.Timeout,
 		LocalAddr: cfg.GetLocalAddr(),
+	}
+
+	// Call OnDial hook for CPS tracking
+	if cfg.OnDial != nil {
+		cfg.OnDial()
 	}
 
 	var conn net.Conn

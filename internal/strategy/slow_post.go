@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/srtdog64/loadtestforge/internal/config"
+	"github.com/srtdog64/loadtestforge/internal/errors"
 	"github.com/srtdog64/loadtestforge/internal/httpdata"
 	"github.com/srtdog64/loadtestforge/internal/netutil"
 )
@@ -42,7 +43,7 @@ func (s *SlowPost) Execute(ctx context.Context, target Target) error {
 
 	mc, parsedURL, err := netutil.DialManaged(ctx, target.URL, s.GetConnConfig(), &s.activeConnections)
 	if err != nil {
-		return err
+		return errors.ClassifyAndWrap(err, "connection failed")
 	}
 	defer mc.Close()
 
@@ -61,7 +62,7 @@ func (s *SlowPost) Execute(ctx context.Context, target Target) error {
 
 	if _, err := mc.WriteWithTimeout([]byte(postRequest), config.DefaultWriteTimeout); err != nil {
 		s.RecordTimeout()
-		return err
+		return errors.ClassifyAndWrap(err, "write failed")
 	}
 
 	// Record initial success
@@ -85,7 +86,7 @@ func (s *SlowPost) Execute(ctx context.Context, target Target) error {
 				if _, err := mc.WriteWithTimeout([]byte(postRequest), config.DefaultWriteTimeout); err != nil {
 					s.RecordTimeout()
 					s.RecordConnectionEnd(connID)
-					return err
+					return errors.ClassifyAndWrap(err, "write failed")
 				}
 				continue
 			}
@@ -95,7 +96,7 @@ func (s *SlowPost) Execute(ctx context.Context, target Target) error {
 			if _, err := mc.WriteWithTimeout([]byte{byte(bodyByte)}, config.DefaultWriteTimeout); err != nil {
 				s.RecordTimeout()
 				s.RecordConnectionEnd(connID)
-				return err
+				return errors.ClassifyAndWrap(err, "write failed")
 			}
 			bytesSent++
 

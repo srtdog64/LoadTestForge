@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/srtdog64/loadtestforge/internal/errors"
 	"github.com/srtdog64/loadtestforge/internal/httpdata"
 	"github.com/srtdog64/loadtestforge/internal/netutil"
 )
@@ -426,13 +427,13 @@ func NewRUDY(cfg RUDYConfig, bindIP string) *RUDY {
 func (r *RUDY) Execute(ctx context.Context, target Target) error {
 	parsedURL, host, useTLS, err := netutil.ParseTargetURL(target.URL)
 	if err != nil {
-		return err
+		return errors.ClassifyAndWrap(err, "invalid URL")
 	}
 
 	conn, err := r.dialWithOptions(ctx, host, useTLS, parsedURL.Hostname())
 	if err != nil {
 		r.stats.RecordError(err, "connect", fmt.Sprintf("Failed to connect to %s", host))
-		return err
+		return errors.ClassifyAndWrap(err, "connection failed")
 	}
 
 	r.IncrementConnections()
