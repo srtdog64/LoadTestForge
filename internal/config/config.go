@@ -9,6 +9,7 @@ type Config struct {
 	Strategy    StrategyConfig
 	Performance PerformanceConfig
 	Reporting   ReportingConfig
+	Thresholds  ThresholdsConfig
 	BindIP      string   // Single IP (legacy)
 	BindIPs     []string // Multiple IPs for round-robin binding
 }
@@ -56,6 +57,8 @@ type StrategyConfig struct {
 	// TCP Flood settings
 	SendDataOnConnect bool // Send a byte after TCP connection (tcp-flood)
 	TCPKeepAlive      bool // Enable TCP keep-alive (tcp-flood)
+	// TLS settings
+	TLSSkipVerify bool // Skip TLS certificate verification (default: true for testing)
 }
 
 type PulseConfig struct {
@@ -79,6 +82,16 @@ type ReportingConfig struct {
 	Interval     time.Duration
 	ExportPath   string
 	ExportFormat string
+}
+
+// ThresholdsConfig holds pass/fail threshold settings.
+type ThresholdsConfig struct {
+	MinSuccessRate    float64       // Minimum success rate (0-100), default: 90
+	MaxRateDeviation  float64       // Maximum rate deviation (0-100), default: 20
+	MaxP99Latency     time.Duration // Maximum p99 latency, default: 5s
+	MaxTimeoutRate    float64       // Maximum timeout rate (0-100), default: 10
+	MaxP95Latency     time.Duration // Maximum p95 latency for warnings, default: 1s
+	MaxP99LatencyWarn time.Duration // P99 latency warning threshold, default: 3s
 }
 
 func DefaultConfig() *Config {
@@ -117,6 +130,7 @@ func DefaultConfig() *Config {
 			EvasionLevel:      2,
 			SendDataOnConnect: false,
 			TCPKeepAlive:      true,
+			TLSSkipVerify:     true, // Default to true for load testing scenarios
 		},
 		Performance: PerformanceConfig{
 			TargetSessions:         100,
@@ -135,6 +149,14 @@ func DefaultConfig() *Config {
 		Reporting: ReportingConfig{
 			Interval:     2 * time.Second,
 			ExportFormat: "json",
+		},
+		Thresholds: ThresholdsConfig{
+			MinSuccessRate:    90.0,
+			MaxRateDeviation:  20.0,
+			MaxP99Latency:     5 * time.Second,
+			MaxTimeoutRate:    10.0,
+			MaxP95Latency:     1 * time.Second,
+			MaxP99LatencyWarn: 3 * time.Second,
 		},
 	}
 }

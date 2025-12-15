@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"math/rand"
 	"net"
 	"net/url"
 	"os"
@@ -22,8 +21,7 @@ import (
 )
 
 func main() {
-	// Seed random number generator
-	rand.Seed(time.Now().UnixNano())
+	// Go 1.20+ automatically seeds the global random number generator
 
 	cfg := parseFlags()
 
@@ -75,7 +73,7 @@ func main() {
 		metricsCollector,
 	)
 
-	reporter := metrics.NewReporter(metricsCollector)
+	reporter := metrics.NewReporter(metricsCollector, cfg.Thresholds)
 
 	go func() {
 		reporter.Start(ctx)
@@ -194,6 +192,15 @@ func parseFlags() *config.Config {
 	flag.BoolVar(&cfg.Strategy.SendDataOnConnect, "send-data", false, "Send a byte after TCP connection (tcp-flood)")
 	flag.BoolVar(&cfg.Strategy.TCPKeepAlive, "tcp-keepalive", true, "Enable TCP keep-alive (tcp-flood)")
 
+	// TLS settings
+	flag.BoolVar(&cfg.Strategy.TLSSkipVerify, "tls-skip-verify", true, "Skip TLS certificate verification")
+
+	// Threshold settings for pass/fail evaluation
+	flag.Float64Var(&cfg.Thresholds.MinSuccessRate, "min-success-rate", 90.0, "Minimum success rate (%) for pass")
+	flag.Float64Var(&cfg.Thresholds.MaxRateDeviation, "max-rate-deviation", 20.0, "Maximum rate deviation (%) for pass")
+	flag.DurationVar(&cfg.Thresholds.MaxP99Latency, "max-p99-latency", 5*time.Second, "Maximum p99 latency for pass")
+	flag.Float64Var(&cfg.Thresholds.MaxTimeoutRate, "max-timeout-rate", 10.0, "Maximum timeout rate (%) for pass")
+
 	flag.Parse()
 
 	return cfg
@@ -235,6 +242,46 @@ func validateConfig(cfg *config.Config) error {
 		if cfg.Performance.RampUpDuration >= cfg.Performance.Duration {
 			return fmt.Errorf("ramp-up duration must be shorter than total duration")
 		}
+	}
+
+	// Validate payload depth to prevent memory exhaustion
+	if cfg.Strategy.PayloadDepth < 0 {
+		return fmt.Errorf("payload depth cannot be negative")
+	}
+	if cfg.Strategy.PayloadDepth > 500 {
+		log.Printf("Warning: payload depth %d is very high (>500), may cause memory issues", cfg.Strategy.PayloadDepth)
+	}
+
+	// Validate payload size
+	if cfg.Strategy.PayloadSize < 0 {
+		return fmt.Errorf("payload size cannot be negative")
+	}
+	if cfg.Strategy.PayloadSize > 100*1024*1024 { // 100MB
+		return fmt.Errorf("payload size %d exceeds maximum allowed (100MB)", cfg.Strategy.PayloadSize)
+	}
+
+	// Validate pulse mode configuration
+	if cfg.Performance.Pulse.Enabled {
+		if cfg.Performance.Pulse.LowRatio < 0 || cfg.Performance.Pulse.LowRatio > 1 {
+			return fmt.Errorf("pulse low ratio must be between 0 and 1")
+		}
+		if cfg.Performance.Pulse.HighTime <= 0 {
+			return fmt.Errorf("pulse high time must be positive")
+		}
+		if cfg.Performance.Pulse.LowTime <= 0 {
+			return fmt.Errorf("pulse low time must be positive")
+		}
+	}
+
+	// Validate threshold settings
+	if cfg.Thresholds.MinSuccessRate < 0 || cfg.Thresholds.MinSuccessRate > 100 {
+		return fmt.Errorf("min success rate must be between 0 and 100")
+	}
+	if cfg.Thresholds.MaxRateDeviation < 0 || cfg.Thresholds.MaxRateDeviation > 100 {
+		return fmt.Errorf("max rate deviation must be between 0 and 100")
+	}
+	if cfg.Thresholds.MaxTimeoutRate < 0 || cfg.Thresholds.MaxTimeoutRate > 100 {
+		return fmt.Errorf("max timeout rate must be between 0 and 100")
 	}
 
 	return nil

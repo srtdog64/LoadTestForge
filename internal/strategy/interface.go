@@ -28,6 +28,7 @@ type MetricsCallback interface {
 	RecordSocketReconnect()
 	RecordConnectionAttempt()
 	RecordSuccessWithLatency(duration time.Duration)
+	RecordFailure()
 }
 
 // MetricsAware indicates a strategy supports metrics callbacks.
@@ -38,6 +39,13 @@ type MetricsAware interface {
 // ConnectionTracker indicates a strategy tracks active connections.
 type ConnectionTracker interface {
 	ActiveConnections() int64
+}
+
+// SelfReportingStrategy indicates a strategy handles its own metrics reporting.
+// The session manager should not record success/failure metrics for these strategies
+// to avoid double counting, but should still handle error-based flow control (backoff).
+type SelfReportingStrategy interface {
+	IsSelfReporting() bool
 }
 
 // Result represents the outcome of a single request.

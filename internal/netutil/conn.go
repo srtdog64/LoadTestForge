@@ -18,6 +18,7 @@ type ConnConfig struct {
 	LocalAddr      *net.TCPAddr  // Legacy single IP
 	BindConfig     *BindConfig   // Multi-IP support
 	WindowSize     int           // TCP receive buffer size (0 = default)
+	TLSSkipVerify  bool          // Skip TLS certificate verification
 }
 
 // DefaultConnConfig returns sensible defaults.
@@ -29,6 +30,7 @@ func DefaultConnConfig(bindIP string) ConnConfig {
 		LocalAddr:      NewLocalTCPAddr(bindIP),
 		BindConfig:     NewBindConfig(bindIP),
 		WindowSize:     0,
+		TLSSkipVerify:  true, // Default to true for load testing
 	}
 }
 
@@ -82,7 +84,7 @@ func DialManaged(
 	if useTLS {
 		tlsConfig := &tls.Config{
 			ServerName:         parsedURL.Hostname(),
-			InsecureSkipVerify: false,
+			InsecureSkipVerify: cfg.TLSSkipVerify,
 		}
 		conn, err = tls.DialWithDialer(dialer, "tcp", host, tlsConfig)
 	} else {

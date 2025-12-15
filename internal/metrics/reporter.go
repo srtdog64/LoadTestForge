@@ -5,16 +5,47 @@ import (
 	"fmt"
 	"math"
 	"time"
+
+	"github.com/srtdog64/loadtestforge/internal/config"
 )
 
 type Reporter struct {
-	collector *Collector
+	collector  *Collector
+	thresholds config.ThresholdsConfig
 }
 
-func NewReporter(collector *Collector) *Reporter {
-	return &Reporter{
-		collector: collector,
+// NewReporter creates a Reporter with custom thresholds.
+// If thresholds has zero values, defaults are applied.
+func NewReporter(collector *Collector, thresholds config.ThresholdsConfig) *Reporter {
+	// Apply defaults for zero values
+	if thresholds.MinSuccessRate == 0 {
+		thresholds.MinSuccessRate = 90.0
 	}
+	if thresholds.MaxRateDeviation == 0 {
+		thresholds.MaxRateDeviation = 20.0
+	}
+	if thresholds.MaxP99Latency == 0 {
+		thresholds.MaxP99Latency = 5 * time.Second
+	}
+	if thresholds.MaxTimeoutRate == 0 {
+		thresholds.MaxTimeoutRate = 10.0
+	}
+	if thresholds.MaxP95Latency == 0 {
+		thresholds.MaxP95Latency = 1 * time.Second
+	}
+	if thresholds.MaxP99LatencyWarn == 0 {
+		thresholds.MaxP99LatencyWarn = 3 * time.Second
+	}
+
+	return &Reporter{
+		collector:  collector,
+		thresholds: thresholds,
+	}
+}
+
+// SetThresholds updates the pass/fail thresholds.
+func (r *Reporter) SetThresholds(thresholds config.ThresholdsConfig) {
+	r.thresholds = thresholds
 }
 
 func (r *Reporter) Start(ctx context.Context) {
@@ -131,37 +162,48 @@ type TestResult struct {
 	Failures []string
 }
 
-// EvaluateTestResult determines if the test passed based on metrics
+// EvaluateTestResult determines if the test passed based on metrics with default thresholds.
 func EvaluateTestResult(stats Stats) TestResult {
+	return EvaluateTestResultWithThresholds(stats, config.ThresholdsConfig{
+		MinSuccessRate:   90.0,
+		MaxRateDeviation: 20.0,
+		MaxP99Latency:    5 * time.Second,
+		MaxTimeoutRate:   10.0,
+	})
+}
+
+// EvaluateTestResultWithThresholds determines if the test passed based on custom thresholds.
+func EvaluateTestResultWithThresholds(stats Stats, thresholds config.ThresholdsConfig) TestResult {
 	result := TestResult{Passed: true, Failures: make([]string, 0)}
 
-	// 성공률이 90% 미만이면 실패
-	if stats.Total > 0 && stats.SuccessRate < 90.0 {
+	// 성공률 체크
+	if stats.Total > 0 && stats.SuccessRate < thresholds.MinSuccessRate {
 		result.Passed = false
-		result.Failures = append(result.Failures, fmt.Sprintf("Success rate %.2f%% below 90%% threshold", stats.SuccessRate))
+		result.Failures = append(result.Failures, fmt.Sprintf("Success rate %.2f%% below %.0f%% threshold", stats.SuccessRate, thresholds.MinSuccessRate))
 	}
 
-	// 요청률 편차가 20% 초과면 실패
+	// 요청률 편차 체크
 	if stats.AvgPerSec > 0 {
 		deviation := (stats.StdDev / stats.AvgPerSec) * 100
-		if deviation > 20 {
+		if deviation > thresholds.MaxRateDeviation {
 			result.Passed = false
-			result.Failures = append(result.Failures, fmt.Sprintf("Rate deviation %.2f%% exceeds 20%% threshold", deviation))
+			result.Failures = append(result.Failures, fmt.Sprintf("Rate deviation %.2f%% exceeds %.0f%% threshold", deviation, thresholds.MaxRateDeviation))
 		}
 	}
 
-	// p99 레이턴시가 5초 초과면 실패
-	if stats.LatencyEnabled && stats.LatencyP99 > 5000000 {
+	// p99 레이턴시 체크
+	maxP99Microseconds := float64(thresholds.MaxP99Latency.Microseconds())
+	if stats.LatencyEnabled && float64(stats.LatencyP99) > maxP99Microseconds {
 		result.Passed = false
-		result.Failures = append(result.Failures, fmt.Sprintf("p99 latency %.2f ms exceeds 5000ms threshold", float64(stats.LatencyP99)/1000.0))
+		result.Failures = append(result.Failures, fmt.Sprintf("p99 latency %.2f ms exceeds %.0f ms threshold", float64(stats.LatencyP99)/1000.0, float64(thresholds.MaxP99Latency.Milliseconds())))
 	}
 
-	// 타임아웃 비율이 10% 초과면 실패
+	// 타임아웃 비율 체크
 	if stats.Total > 0 {
 		timeoutRate := float64(stats.SocketTimeouts) / float64(stats.Total) * 100
-		if timeoutRate > 10 {
+		if timeoutRate > thresholds.MaxTimeoutRate {
 			result.Passed = false
-			result.Failures = append(result.Failures, fmt.Sprintf("Timeout rate %.2f%% exceeds 10%% threshold", timeoutRate))
+			result.Failures = append(result.Failures, fmt.Sprintf("Timeout rate %.2f%% exceeds %.0f%% threshold", timeoutRate, thresholds.MaxTimeoutRate))
 		}
 	}
 
@@ -248,7 +290,12 @@ func (r *Reporter) printFinalReport(startTime time.Time) {
 	// 최종 Pass/Fail 판정
 	fmt.Println()
 	fmt.Println("=== Test Verdict ===")
-	result := EvaluateTestResult(stats)
+	fmt.Printf("Thresholds: success>=%.0f%%, deviation<=%.0f%%, p99<=%.0fms, timeout<=%.0f%%\n",
+		r.thresholds.MinSuccessRate,
+		r.thresholds.MaxRateDeviation,
+		float64(r.thresholds.MaxP99Latency.Milliseconds()),
+		r.thresholds.MaxTimeoutRate)
+	result := EvaluateTestResultWithThresholds(stats, r.thresholds)
 	if result.Passed {
 		fmt.Println("Result: PASS")
 	} else {

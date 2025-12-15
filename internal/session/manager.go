@@ -345,6 +345,12 @@ func (m *Manager) launchSession(parentCtx context.Context) {
 		maxConsecutiveFailures = config.DefaultMaxConsecutiveFailures
 	}
 
+	// Check if strategy reports its own metrics
+	isSelfReporting := false
+	if sr, ok := m.strategy.(strategy.SelfReportingStrategy); ok && sr.IsSelfReporting() {
+		isSelfReporting = true
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -352,7 +358,10 @@ func (m *Manager) launchSession(parentCtx context.Context) {
 		default:
 			err := m.strategy.Execute(ctx, m.target)
 			if err != nil {
-				m.metrics.RecordFailure()
+				// Only record failure if not self-reporting
+				if !isSelfReporting {
+					m.metrics.RecordFailure()
+				}
 				consecutiveFailures++
 
 				if consecutiveFailures >= maxConsecutiveFailures {
@@ -367,7 +376,10 @@ func (m *Manager) launchSession(parentCtx context.Context) {
 					continue
 				}
 			} else {
-				m.metrics.RecordSuccess()
+				// Only record success if not self-reporting
+				if !isSelfReporting {
+					m.metrics.RecordSuccess()
+				}
 				consecutiveFailures = 0
 			}
 

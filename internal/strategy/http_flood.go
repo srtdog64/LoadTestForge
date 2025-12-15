@@ -22,13 +22,15 @@ import (
 // It sends as many HTTP requests as possible to overwhelm the target server.
 type HTTPFlood struct {
 	BaseStrategy
-	client          *http.Client
-	timeout         time.Duration
-	method          string
-	postDataSize    int
-	requestsPerConn int
-	requestsSent    int64
-	cookiePool      []string
+	client           *http.Client
+	timeout          time.Duration
+	method           string
+	postDataSize     int
+	requestsPerConn  int
+	requestsSent     int64
+	cookiePool       []string
+	trackedTransport *http.Transport
+	metrics          MetricsCallback
 }
 
 // NewHTTPFlood creates a new HTTPFlood strategy.
@@ -55,11 +57,16 @@ func NewHTTPFlood(timeout time.Duration, method string, postDataSize int, reques
 		TLSSkipVerify: true,
 	}
 
-	transport := netutil.NewTrackedTransport(dialerCfg, &h.activeConnections)
+	trackedTransport := netutil.NewTrackedTransport(dialerCfg, &h.activeConnections)
+	h.trackedTransport = trackedTransport
+
+	// Create common config to check for MetricsCallback later, for now we set it if we can access it.
+	// HTTPFlood struct doesn't have MetricsCallback field in previous turn!
+	// We need to add SetMetricsCallback to HTTPFlood to make it MetricsAware.
 
 	h.client = &http.Client{
 		Timeout:   timeout,
-		Transport: transport,
+		Transport: trackedTransport,
 	}
 
 	return h
@@ -145,9 +152,8 @@ func (h *HTTPFlood) sendRequest(ctx context.Context, target Target, parsedURL *u
 		req.Header.Set(k, v)
 	}
 
-	startTime := time.Now()
 	resp, err := h.client.Do(req)
-	latency := time.Since(startTime)
+	// latency := time.Since(startTime) -- now handled by MetricsTransport
 
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
@@ -162,7 +168,7 @@ func (h *HTTPFlood) sendRequest(ctx context.Context, target Target, parsedURL *u
 		return fmt.Errorf("http error: %d", resp.StatusCode)
 	}
 
-	h.RecordLatency(latency)
+	// h.RecordLatency(latency) - handled by MetricsTransport
 
 	return nil
 }
@@ -270,4 +276,15 @@ func (h *HTTPFlood) Name() string {
 
 func (h *HTTPFlood) RequestsSent() int64 {
 	return atomic.LoadInt64(&h.requestsSent)
+}
+
+func (h *HTTPFlood) IsSelfReporting() bool {
+	return true
+}
+
+func (h *HTTPFlood) SetMetricsCallback(callback MetricsCallback) {
+	h.metrics = callback
+	if h.trackedTransport != nil {
+		h.client.Transport = netutil.NewMetricsTransport(h.trackedTransport, callback)
+	}
 }

@@ -65,8 +65,14 @@ func (h *HULK) rebuildClient() {
 	}
 
 	// Use TrackedTransport to monitor active connections
-	transport := netutil.NewTrackedTransport(dialerCfg, &h.connectionCount)
-	transport.DisableCompression = false
+	trackedTransport := netutil.NewTrackedTransport(dialerCfg, &h.connectionCount)
+	trackedTransport.DisableCompression = false
+
+	// Wrap with MetricsTransport if metrics callback is set
+	var transport http.RoundTripper = trackedTransport
+	if h.metrics != nil {
+		transport = netutil.NewMetricsTransport(trackedTransport, h.metrics)
+	}
 
 	h.client = &http.Client{
 		Timeout:   h.config.Timeout,
@@ -203,4 +209,8 @@ func (h *HULK) Name() string {
 
 func (h *HULK) RequestsSent() int64 {
 	return atomic.LoadInt64(&h.requestsSent)
+}
+
+func (h *HULK) IsSelfReporting() bool {
+	return true
 }

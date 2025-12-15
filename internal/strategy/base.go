@@ -28,6 +28,9 @@ type CommonConfig struct {
 	KeepAliveInterval time.Duration // Interval for keep-alive/ping packets
 	TCPKeepAlive      bool          // Enable TCP-level keep-alive
 
+	// TLS settings
+	TLSSkipVerify bool // Skip TLS certificate verification
+
 	// Evasion settings
 	EnableStealth bool // Browser fingerprint headers (Sec-Fetch-*)
 	RandomizePath bool // Realistic query strings for cache bypass
@@ -40,6 +43,7 @@ func DefaultCommonConfig() CommonConfig {
 		SessionLifetime:   config.DefaultSessionLifetime, // 0 = unlimited
 		KeepAliveInterval: config.DefaultKeepAliveInterval,
 		TCPKeepAlive:      true,
+		TLSSkipVerify:     true, // Default to true for load testing
 		EnableStealth:     false,
 		RandomizePath:     false,
 	}
@@ -52,6 +56,7 @@ func CommonConfigFromStrategyConfig(cfg *config.StrategyConfig) CommonConfig {
 		SessionLifetime:   cfg.SessionLifetime,
 		KeepAliveInterval: cfg.KeepAliveInterval,
 		TCPKeepAlive:      cfg.TCPKeepAlive,
+		TLSSkipVerify:     cfg.TLSSkipVerify,
 		EnableStealth:     cfg.EnableStealth,
 		RandomizePath:     cfg.RandomizePath,
 	}
@@ -65,6 +70,7 @@ func (c CommonConfig) ToConnConfig(bindIP string) netutil.ConnConfig {
 		LocalAddr:      netutil.NewLocalTCPAddr(bindIP),
 		BindConfig:     netutil.NewBindConfig(bindIP),
 		WindowSize:     0,
+		TLSSkipVerify:  c.TLSSkipVerify,
 	}
 }
 
