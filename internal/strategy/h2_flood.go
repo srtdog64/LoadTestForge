@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"github.com/srtdog64/loadtestforge/internal/config"
+	"github.com/srtdog64/loadtestforge/internal/errors"
 	"github.com/srtdog64/loadtestforge/internal/httpdata"
+	"github.com/srtdog64/loadtestforge/internal/netutil"
 
 	"golang.org/x/net/http2"
 )
@@ -57,7 +59,7 @@ func NewH2FloodWithConfig(cfg *config.StrategyConfig, bindIP string) *H2Flood {
 }
 
 func (h *H2Flood) Execute(ctx context.Context, target Target) error {
-	parsedURL, host, useTLS, err := parseTargetURL(target.URL)
+	parsedURL, host, useTLS, err := netutil.ParseTargetURL(target.URL)
 	if err != nil {
 		return err
 	}
@@ -90,13 +92,13 @@ func (h *H2Flood) Execute(ctx context.Context, target Target) error {
 
 	netConn, err := dialer.DialContext(sessionCtx, "tcp", host)
 	if err != nil {
-		return fmt.Errorf("tcp connection failed: %w", err)
+		return errors.ClassifyAndWrap(err, "tcp connection failed")
 	}
 
 	tlsConn := tls.Client(netConn, tlsConfig)
 	if err := tlsConn.HandshakeContext(sessionCtx); err != nil {
 		netConn.Close()
-		return fmt.Errorf("tls handshake failed: %w", err)
+		return errors.ClassifyAndWrap(err, "tls handshake failed")
 	}
 
 	// Verify HTTP/2 was negotiated
@@ -119,7 +121,7 @@ func (h *H2Flood) Execute(ctx context.Context, target Target) error {
 
 	clientConn, err := transport.NewClientConn(tlsConn)
 	if err != nil {
-		return fmt.Errorf("h2 client connection failed: %w", err)
+		return errors.ClassifyAndWrap(err, "h2 client connection failed")
 	}
 
 	path := parsedURL.Path
@@ -163,7 +165,7 @@ func (h *H2Flood) Execute(ctx context.Context, target Target) error {
 }
 
 func (h *H2Flood) sendStream(ctx context.Context, cc *http2.ClientConn, targetURL, path, host string) {
-	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	reqCtx, cancel := context.WithTimeout(ctx, config.DefaultStreamTimeout)
 	defer cancel()
 
 	// Create request with random parameters to bypass caching
@@ -221,7 +223,7 @@ func (h *H2Flood) executeH2C(ctx context.Context, target Target, parsedURL *url.
 
 	conn, err := dialer.DialContext(sessionCtx, "tcp", host)
 	if err != nil {
-		return fmt.Errorf("tcp connection failed: %w", err)
+		return errors.ClassifyAndWrap(err, "tcp connection failed")
 	}
 
 	h.IncrementConnections()
@@ -240,7 +242,7 @@ func (h *H2Flood) executeH2C(ctx context.Context, target Target, parsedURL *url.
 
 	clientConn, err := transport.NewClientConn(conn)
 	if err != nil {
-		return fmt.Errorf("h2c client connection failed: %w", err)
+		return errors.ClassifyAndWrap(err, "h2c client connection failed")
 	}
 
 	path := parsedURL.Path
@@ -277,28 +279,6 @@ func (h *H2Flood) executeH2C(ctx context.Context, target Target, parsedURL *url.
 
 		time.Sleep(1 * time.Millisecond)
 	}
-}
-
-// parseTargetURL parses a URL and returns parsed URL, host:port, and whether TLS is used
-func parseTargetURL(rawURL string) (*url.URL, string, bool, error) {
-	parsedURL, err := url.Parse(rawURL)
-	if err != nil {
-		return nil, "", false, err
-	}
-
-	useTLS := parsedURL.Scheme == "https"
-	host := parsedURL.Host
-
-	// Add default port if not specified
-	if parsedURL.Port() == "" {
-		if useTLS {
-			host = host + ":443"
-		} else {
-			host = host + ":80"
-		}
-	}
-
-	return parsedURL, host, useTLS, nil
 }
 
 func (h *H2Flood) Name() string {

@@ -172,7 +172,6 @@ func StrategyDefaults(strategyType string) map[string]interface{} {
 	case "heavy-payload":
 		defaults["payload-type"] = config.PayloadTypeDeepJSON
 		defaults["payload-depth"] = config.DefaultPayloadDepth
-		defaults["payload-depth"] = config.DefaultPayloadDepth
 		defaults["payload-size"] = config.DefaultPayloadSize
 
 	case "hulk":
@@ -270,8 +269,6 @@ func EstimateResourceUsage(strategyType string, sessions int, duration time.Dura
 		estimate.EstimatedBandwidth = "50-500 Mbps"
 
 	case "heavy-payload":
-		estimate.EstimatedConns = sessions
-		estimate.EstimatedMemMB = float64(sessions) * 1.0 // Large payloads
 		estimate.EstimatedConns = sessions
 		estimate.EstimatedMemMB = float64(sessions) * 1.0 // Large payloads
 		estimate.EstimatedBandwidth = "10-50 Mbps"

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/srtdog64/loadtestforge/internal/config"
+	"github.com/srtdog64/loadtestforge/internal/errors"
 	"github.com/srtdog64/loadtestforge/internal/httpdata"
 	"github.com/srtdog64/loadtestforge/internal/netutil"
 )
@@ -31,6 +32,7 @@ type HTTPFlood struct {
 	cookiePool       []string
 	trackedTransport *http.Transport
 	metrics          MetricsCallback
+	bindIP           string
 }
 
 // NewHTTPFlood creates a new HTTPFlood strategy.
@@ -47,29 +49,43 @@ func NewHTTPFlood(timeout time.Duration, method string, postDataSize int, reques
 		postDataSize:    postDataSize,
 		requestsPerConn: requestsPerConn,
 		cookiePool:      generateCookiePool(50),
+		bindIP:          bindIP,
 	}
 
+	// Initial client setup (without metrics)
+	h.rebuildClient()
+
+	return h
+}
+
+// rebuildClient rebuilds the HTTP client with current metrics callback.
+func (h *HTTPFlood) rebuildClient() {
 	dialerCfg := netutil.DialerConfig{
-		Timeout:       30 * time.Second,
-		KeepAlive:     30 * time.Second,
-		LocalAddr:     netutil.NewLocalTCPAddr(bindIP),
-		BindConfig:    netutil.NewBindConfig(bindIP),
+		Timeout:       config.DefaultDialerTimeout,
+		KeepAlive:     config.DefaultDialerKeepAlive,
+		LocalAddr:     netutil.NewLocalTCPAddr(h.bindIP),
+		BindConfig:    netutil.NewBindConfig(h.bindIP),
 		TLSSkipVerify: true,
+	}
+
+	// Add OnDial hook if metrics callback is set
+	if h.metrics != nil {
+		dialerCfg.OnDial = h.metrics.RecordConnectionAttempt
 	}
 
 	trackedTransport := netutil.NewTrackedTransport(dialerCfg, &h.activeConnections)
 	h.trackedTransport = trackedTransport
 
-	// Create common config to check for MetricsCallback later, for now we set it if we can access it.
-	// HTTPFlood struct doesn't have MetricsCallback field in previous turn!
-	// We need to add SetMetricsCallback to HTTPFlood to make it MetricsAware.
-
-	h.client = &http.Client{
-		Timeout:   timeout,
-		Transport: trackedTransport,
+	// Wrap with MetricsTransport if metrics callback is set
+	var transport http.RoundTripper = trackedTransport
+	if h.metrics != nil {
+		transport = netutil.NewMetricsTransport(trackedTransport, h.metrics)
 	}
 
-	return h
+	h.client = &http.Client{
+		Timeout:   h.timeout,
+		Transport: transport,
+	}
 }
 
 // NewHTTPFloodWithConfig creates an HTTPFlood strategy from StrategyConfig.
@@ -99,7 +115,7 @@ func (h *HTTPFlood) Execute(ctx context.Context, target Target) error {
 	// Parse URL once at the start of execution (Performance optimization)
 	parsedURL, err := url.Parse(target.URL)
 	if err != nil {
-		return fmt.Errorf("failed to parse target URL: %w", err)
+		return errors.ClassifyAndWrap(err, "failed to parse target URL")
 	}
 
 	for i := 0; i < h.requestsPerConn; i++ {
@@ -135,7 +151,7 @@ func (h *HTTPFlood) sendRequest(ctx context.Context, target Target, parsedURL *u
 
 	req, err := http.NewRequestWithContext(reqCtx, h.method, targetURL, body)
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return errors.ClassifyAndWrap(err, "failed to create request")
 	}
 
 	h.applyRandomHeaders(req)
@@ -156,7 +172,7 @@ func (h *HTTPFlood) sendRequest(ctx context.Context, target Target, parsedURL *u
 	// latency := time.Since(startTime) -- now handled by MetricsTransport
 
 	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
+		return errors.ClassifyAndWrap(err, "request failed")
 	}
 	defer resp.Body.Close()
 
@@ -165,7 +181,7 @@ func (h *HTTPFlood) sendRequest(ctx context.Context, target Target, parsedURL *u
 	atomic.AddInt64(&h.requestsSent, 1)
 
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("http error: %d", resp.StatusCode)
+		return errors.NewHTTPError(resp.StatusCode, resp.Status, "")
 	}
 
 	// h.RecordLatency(latency) - handled by MetricsTransport
@@ -284,7 +300,5 @@ func (h *HTTPFlood) IsSelfReporting() bool {
 
 func (h *HTTPFlood) SetMetricsCallback(callback MetricsCallback) {
 	h.metrics = callback
-	if h.trackedTransport != nil {
-		h.client.Transport = netutil.NewMetricsTransport(h.trackedTransport, callback)
-	}
+	h.rebuildClient()
 }

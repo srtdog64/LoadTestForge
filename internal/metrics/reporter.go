@@ -107,6 +107,11 @@ func (r *Reporter) printStats(startTime time.Time) {
 	fmt.Printf("Requests/sec:      %.2f (sigma=%.2f)\n", stats.AvgPerSec, stats.StdDev)
 	fmt.Printf("Min/Max:           %d / %d\n", stats.MinPerSec, stats.MaxPerSec)
 	fmt.Printf("Percentiles:       p50=%d, p95=%d, p99=%d\n", stats.P50, stats.P95, stats.P99)
+
+	if stats.AvgConnPerSec > 0 {
+		fmt.Printf("Connections/sec:   %.2f\n", stats.AvgConnPerSec)
+		fmt.Printf("CPS Min/Max:       %d / %d\n", stats.MinConnPerSec, stats.MaxConnPerSec)
+	}
 	fmt.Println()
 
 	if stats.LatencyEnabled && stats.LatencyCount > 0 {
@@ -260,6 +265,11 @@ func (r *Reporter) printFinalReport(startTime time.Time) {
 	fmt.Printf("Std Deviation:     %.2f\n", stats.StdDev)
 	fmt.Printf("Min/Max:           %d / %d\n", stats.MinPerSec, stats.MaxPerSec)
 	fmt.Printf("Percentiles:       p50=%d, p95=%d, p99=%d\n", stats.P50, stats.P95, stats.P99)
+
+	if stats.AvgConnPerSec > 0 {
+		fmt.Printf("Avg Conn/sec:      %.2f\n", stats.AvgConnPerSec)
+		fmt.Printf("CPS Min/Max:       %d / %d\n", stats.MinConnPerSec, stats.MaxConnPerSec)
+	}
 	fmt.Println()
 
 	if stats.LatencyEnabled && stats.LatencyCount > 0 {

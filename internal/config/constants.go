@@ -21,6 +21,18 @@ const (
 
 	// DefaultTCPKeepAlive is the TCP keep-alive period
 	DefaultTCPKeepAlive = 30 * time.Second
+
+	// DefaultDialerTimeout is the default dialer timeout for http.Transport
+	DefaultDialerTimeout = 30 * time.Second
+
+	// DefaultDialerKeepAlive is the default dialer keep-alive for http.Transport
+	DefaultDialerKeepAlive = 30 * time.Second
+
+	// DefaultPingTimeout is the default timeout for ping/health check operations
+	DefaultPingTimeout = 5 * time.Second
+
+	// DefaultStreamTimeout is the default timeout for HTTP/2 stream operations
+	DefaultStreamTimeout = 5 * time.Second
 )
 
 // =============================================================================
@@ -250,6 +262,18 @@ const (
 
 	// BackoffJitterRatio is the jitter ratio for backoff (0-1)
 	BackoffJitterRatio = 0.1
+)
+
+// =============================================================================
+// IP Binding Constants
+// =============================================================================
+
+const (
+	// MaxIPsPerRange is the maximum number of IPs allowed in a single range
+	MaxIPsPerRange = 256
+
+	// MaxTotalBindIPs is the maximum total number of bind IPs allowed
+	MaxTotalBindIPs = 1024
 )
 
 // =============================================================================

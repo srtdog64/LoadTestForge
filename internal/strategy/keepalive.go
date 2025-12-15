@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/srtdog64/loadtestforge/internal/config"
+	"github.com/srtdog64/loadtestforge/internal/errors"
 	"github.com/srtdog64/loadtestforge/internal/httpdata"
 	"github.com/srtdog64/loadtestforge/internal/netutil"
 )
@@ -63,7 +64,7 @@ func (k *KeepAliveHTTP) Execute(ctx context.Context, target Target) error {
 
 	request := k.GetHeaderRandomizer().BuildGETRequest(parsedURL, userAgent)
 
-	if _, err := mc.WriteWithTimeout([]byte(request), 5*time.Second); err != nil {
+	if _, err := mc.WriteWithTimeout([]byte(request), config.DefaultPingTimeout); err != nil {
 		k.RecordTimeout()
 		return err
 	}
@@ -76,11 +77,11 @@ func (k *KeepAliveHTTP) Execute(ctx context.Context, target Target) error {
 	statusLine, err := reader.ReadString('\n')
 	if err != nil {
 		k.RecordTimeout()
-		return fmt.Errorf("failed to read status: %w", err)
+		return errors.ClassifyAndWrap(err, "failed to read status")
 	}
 
 	if !strings.HasPrefix(statusLine, "HTTP/1.1 200") && !strings.HasPrefix(statusLine, "HTTP/1.0 200") {
-		return fmt.Errorf("non-200 response: %s", strings.TrimSpace(statusLine))
+		return errors.NewClassifiedError(errors.ErrorTypeProtocol, fmt.Errorf("non-200 response: %s", strings.TrimSpace(statusLine)), "")
 	}
 
 	contentLength := int64(0)
@@ -89,7 +90,7 @@ func (k *KeepAliveHTTP) Execute(ctx context.Context, target Target) error {
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			k.RecordTimeout()
-			return fmt.Errorf("failed to read headers: %w", err)
+			return errors.ClassifyAndWrap(err, "failed to read headers")
 		}
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -107,7 +108,7 @@ func (k *KeepAliveHTTP) Execute(ctx context.Context, target Target) error {
 	// Consume response body
 	if isChunked {
 		if err := drainChunkedBody(reader); err != nil {
-			return fmt.Errorf("failed to drain chunked body: %w", err)
+			return errors.ClassifyAndWrap(err, "failed to drain chunked body")
 		}
 	} else if contentLength > 0 {
 		io.CopyN(io.Discard, reader, contentLength)
@@ -129,26 +130,26 @@ func (k *KeepAliveHTTP) Execute(ctx context.Context, target Target) error {
 
 			pingRequest := k.GetHeaderRandomizer().BuildGETRequest(parsedURL, userAgent)
 
-			if _, err := mc.WriteWithTimeout([]byte(pingRequest), 5*time.Second); err != nil {
+			if _, err := mc.WriteWithTimeout([]byte(pingRequest), config.DefaultPingTimeout); err != nil {
 				k.RecordTimeout()
 				k.RecordReconnect()
 				consecutiveErrors++
 				if consecutiveErrors >= maxConsecutiveErrors {
-					return fmt.Errorf("ping failed after %d attempts: %w", maxConsecutiveErrors, err)
+					return errors.ClassifyAndWrap(err, fmt.Sprintf("ping failed after %d attempts", maxConsecutiveErrors))
 				}
 				continue
 			}
 
 			k.RecordConnectionActivity(connID)
 
-			mc.SetReadTimeout(5 * time.Second)
+			mc.SetReadTimeout(config.DefaultPingTimeout)
 			statusLine, err := reader.ReadString('\n')
 			if err != nil {
 				k.RecordTimeout()
 				k.RecordReconnect()
 				consecutiveErrors++
 				if consecutiveErrors >= maxConsecutiveErrors {
-					return fmt.Errorf("ping response failed after %d attempts: %w", maxConsecutiveErrors, err)
+					return errors.ClassifyAndWrap(err, fmt.Sprintf("ping response failed after %d attempts", maxConsecutiveErrors))
 				}
 				continue
 			}
@@ -156,14 +157,14 @@ func (k *KeepAliveHTTP) Execute(ctx context.Context, target Target) error {
 			consecutiveErrors = 0
 
 			if !strings.HasPrefix(statusLine, "HTTP/1.1") && !strings.HasPrefix(statusLine, "HTTP/1.0") {
-				return fmt.Errorf("invalid ping response: %s", strings.TrimSpace(statusLine))
+				return errors.NewClassifiedError(errors.ErrorTypeProtocol, fmt.Errorf("invalid ping response: %s", strings.TrimSpace(statusLine)), "")
 			}
 
 			for {
 				line, err := reader.ReadString('\n')
 				if err != nil {
 					k.RecordTimeout()
-					return fmt.Errorf("failed to read ping headers: %w", err)
+					return errors.ClassifyAndWrap(err, "failed to read ping headers")
 				}
 				if strings.TrimSpace(line) == "" {
 					break

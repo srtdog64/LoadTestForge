@@ -259,31 +259,20 @@ func (m *Manager) calculatePulseTarget(isHigh bool, elapsed time.Duration) int {
 }
 
 func (m *Manager) runSteadyState(ctx context.Context) error {
-	// No ramp-up: spawn all sessions immediately but respect rate limit
-	// We use a loop here because spawnSessions limits per tick.
-	remaining := m.perf.TargetSessions
-	for remaining > 0 {
+	// No ramp-up: spawn all sessions using rate limiter
+	// This uses the limiter directly for each session to prevent CPU spin.
+	for i := 0; i < m.perf.TargetSessions; i++ {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
 		}
 
-		// Calculate how many we can spawn in 1 second (or tick) to respect rate
-		// Actually, let's just use spawnSessions logic in a tight loop or just use limiter directly
-		batch := m.perf.SessionsPerSec
-		if batch > remaining {
-			batch = remaining
+		// Wait for rate limiter - this blocks properly without CPU spin
+		if err := m.limiter.Wait(ctx); err != nil {
+			return err
 		}
-
-		// Create batch
-		for i := 0; i < batch; i++ {
-			if err := m.limiter.Wait(ctx); err != nil {
-				return err
-			}
-			go m.launchSession(ctx)
-		}
-		remaining -= batch
+		go m.launchSession(ctx)
 	}
 
 	tickInterval := config.SessionTickInterval

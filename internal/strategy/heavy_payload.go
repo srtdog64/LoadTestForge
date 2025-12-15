@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/srtdog64/loadtestforge/internal/config"
+	"github.com/srtdog64/loadtestforge/internal/errors"
 	"github.com/srtdog64/loadtestforge/internal/httpdata"
 	"github.com/srtdog64/loadtestforge/internal/netutil"
 )
@@ -30,6 +31,8 @@ type HeavyPayload struct {
 	payloadDepth int
 	payloadSize  int
 	requestsSent int64
+	metrics      MetricsCallback
+	bindIP       string
 }
 
 // Payload types
@@ -59,24 +62,42 @@ func NewHeavyPayload(timeout time.Duration, payloadType string, depth int, size 
 		payloadType:  payloadType,
 		payloadDepth: depth,
 		payloadSize:  size,
+		bindIP:       bindIP,
 	}
 
+	// Initial client setup (without metrics)
+	h.rebuildClient()
+
+	return h
+}
+
+// rebuildClient rebuilds the HTTP client with current metrics callback.
+func (h *HeavyPayload) rebuildClient() {
 	dialerCfg := netutil.DialerConfig{
-		Timeout:       30 * time.Second,
-		KeepAlive:     30 * time.Second,
-		LocalAddr:     netutil.NewLocalTCPAddr(bindIP),
-		BindConfig:    netutil.NewBindConfig(bindIP),
+		Timeout:       config.DefaultDialerTimeout,
+		KeepAlive:     config.DefaultDialerKeepAlive,
+		LocalAddr:     netutil.NewLocalTCPAddr(h.bindIP),
+		BindConfig:    netutil.NewBindConfig(h.bindIP),
 		TLSSkipVerify: true,
+	}
+
+	// Add OnDial hook if metrics callback is set
+	if h.metrics != nil {
+		dialerCfg.OnDial = h.metrics.RecordConnectionAttempt
 	}
 
 	transport := netutil.NewTrackedTransport(dialerCfg, &h.activeConnections)
 
-	h.client = &http.Client{
-		Timeout:   timeout,
-		Transport: transport,
+	// Wrap with MetricsTransport if metrics callback is set
+	var httpTransport http.RoundTripper = transport
+	if h.metrics != nil {
+		httpTransport = netutil.NewMetricsTransport(transport, h.metrics)
 	}
 
-	return h
+	h.client = &http.Client{
+		Timeout:   h.timeout,
+		Transport: httpTransport,
+	}
 }
 
 // NewHeavyPayloadWithConfig creates a HeavyPayload strategy from StrategyConfig.
@@ -137,7 +158,7 @@ func (h *HeavyPayload) Execute(ctx context.Context, target Target) error {
 
 	req, err := http.NewRequestWithContext(reqCtx, method, target.URL, body)
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return errors.ClassifyAndWrap(err, "failed to create request")
 	}
 
 	req.Header.Set("User-Agent", httpdata.RandomUserAgent())
@@ -154,7 +175,7 @@ func (h *HeavyPayload) Execute(ctx context.Context, target Target) error {
 	latency := time.Since(startTime)
 
 	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
+		return errors.ClassifyAndWrap(err, "request failed")
 	}
 	defer resp.Body.Close()
 
@@ -162,7 +183,7 @@ func (h *HeavyPayload) Execute(ctx context.Context, target Target) error {
 	atomic.AddInt64(&h.requestsSent, 1)
 
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("http error: %d", resp.StatusCode)
+		return errors.NewHTTPError(resp.StatusCode, resp.Status, "")
 	}
 
 	h.RecordLatency(latency)
@@ -336,4 +357,13 @@ func (h *HeavyPayload) Name() string {
 
 func (h *HeavyPayload) RequestsSent() int64 {
 	return atomic.LoadInt64(&h.requestsSent)
+}
+
+func (h *HeavyPayload) SetMetricsCallback(callback MetricsCallback) {
+	h.metrics = callback
+	h.rebuildClient()
+}
+
+func (h *HeavyPayload) IsSelfReporting() bool {
+	return true
 }

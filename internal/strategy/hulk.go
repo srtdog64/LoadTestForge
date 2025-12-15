@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/srtdog64/loadtestforge/internal/config"
+	"github.com/srtdog64/loadtestforge/internal/errors"
 	"github.com/srtdog64/loadtestforge/internal/httpdata"
 	"github.com/srtdog64/loadtestforge/internal/netutil"
 )
@@ -19,12 +20,11 @@ import (
 // HULK implements Enhanced HULK (HTTP Unbearable Load King) with WAF bypass techniques.
 type HULK struct {
 	BaseStrategy
-	client          *http.Client
-	config          *config.StrategyConfig
-	requestsSent    int64
-	connectionCount int64 // Tracks active connections for this strategy
-	metrics         MetricsCallback
-	bindIP          string
+	client       *http.Client
+	config       *config.StrategyConfig
+	requestsSent int64
+	metrics      MetricsCallback
+	bindIP       string
 }
 
 // NewHULK creates a new HULK strategy.
@@ -54,7 +54,7 @@ func (h *HULK) SetMetricsCallback(callback MetricsCallback) {
 func (h *HULK) rebuildClient() {
 	dialerCfg := netutil.DialerConfig{
 		Timeout:       h.config.Timeout,
-		KeepAlive:     30 * time.Second,
+		KeepAlive:     config.DefaultDialerKeepAlive,
 		LocalAddr:     netutil.NewLocalTCPAddr(h.bindIP),
 		BindConfig:    netutil.NewBindConfig(h.bindIP),
 		TLSSkipVerify: true,
@@ -64,8 +64,8 @@ func (h *HULK) rebuildClient() {
 		dialerCfg.OnDial = h.metrics.RecordConnectionAttempt
 	}
 
-	// Use TrackedTransport to monitor active connections
-	trackedTransport := netutil.NewTrackedTransport(dialerCfg, &h.connectionCount)
+	// Use TrackedTransport to monitor active connections (using BaseStrategy's counter)
+	trackedTransport := netutil.NewTrackedTransport(dialerCfg, &h.activeConnections)
 	trackedTransport.DisableCompression = false
 
 	// Wrap with MetricsTransport if metrics callback is set
@@ -83,7 +83,7 @@ func (h *HULK) rebuildClient() {
 func (h *HULK) Execute(ctx context.Context, target Target) error {
 	parsedURL, err := url.Parse(target.URL)
 	if err != nil {
-		return fmt.Errorf("failed to parse target URL: %w", err)
+		return errors.ClassifyAndWrap(err, "failed to parse target URL")
 	}
 
 	// Dynamic path selection
@@ -108,7 +108,7 @@ func (h *HULK) Execute(ctx context.Context, target Target) error {
 
 	req, err := http.NewRequestWithContext(reqCtx, method, finalURL, body)
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return errors.ClassifyAndWrap(err, "failed to create request")
 	}
 
 	h.applyHeaders(req)

@@ -86,8 +86,11 @@ func (c *Collector) recordLatency(duration time.Duration) {
 	c.latencyMu.Lock()
 	defer c.latencyMu.Unlock()
 
-	if len(c.latencies) < 100000 {
-		c.latencies = append(c.latencies, duration.Microseconds())
+	c.latencies = append(c.latencies, duration.Microseconds())
+
+	// Sliding window: keep last 10,000 samples
+	if len(c.latencies) > 10000 {
+		c.latencies = c.latencies[len(c.latencies)-10000:]
 	}
 }
 

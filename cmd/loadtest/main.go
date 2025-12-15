@@ -299,6 +299,7 @@ func createStrategy(cfg *config.Config) strategy.AttackStrategy {
 }
 
 // parseBindIPs parses comma/space/semicolon separated IP list and ranges (e.g. 192.168.1.10-20).
+// Safety limits are enforced to prevent resource exhaustion from overly large ranges.
 func parseBindIPs(s string) []string {
 	// First split by delimiters
 	parts := strings.FieldsFunc(s, func(c rune) bool {
@@ -307,6 +308,12 @@ func parseBindIPs(s string) []string {
 
 	var ips []string
 	for _, part := range parts {
+		// Check total limit early
+		if len(ips) >= config.MaxTotalBindIPs {
+			log.Printf("Warning: Total bind IPs limited to %d, ignoring remaining", config.MaxTotalBindIPs)
+			break
+		}
+
 		if strings.Contains(part, "-") {
 			// Handle range: 192.168.1.10-20 or 192.168.1.10-192.168.1.20
 			ranges := strings.Split(part, "-")
@@ -333,7 +340,7 @@ func parseBindIPs(s string) []string {
 				// Treat as last octet
 				var endOctet int
 				_, err := fmt.Sscanf(endRangeStr, "%d", &endOctet)
-				if err != nil {
+				if err != nil || endOctet < 0 || endOctet > 255 {
 					continue
 				}
 				endIP = make(net.IP, len(startIPv4))
@@ -347,18 +354,40 @@ func parseBindIPs(s string) []string {
 				continue
 			}
 
-			// Generate IPs
-			// Simplified approach: iterate from start to end (assuming /24 subnet for safety)
-			// Properly incrementing IP
+			// Safety check: ensure start <= end
+			if bytesCompare(startIPv4, endIPv4) > 0 {
+				log.Printf("Warning: Invalid IP range %s (start > end), skipping", part)
+				continue
+			}
+
+			// Safety check: limit IPs per range to prevent resource exhaustion
+			rangeSize := ipRangeSize(startIPv4, endIPv4)
+			if rangeSize > config.MaxIPsPerRange {
+				log.Printf("Warning: IP range %s exceeds limit (%d > %d), truncating to %d IPs",
+					part, rangeSize, config.MaxIPsPerRange, config.MaxIPsPerRange)
+			}
+
+			// Generate IPs with limit
 			curr := make(net.IP, len(startIPv4))
 			copy(curr, startIPv4)
+			rangeCount := 0
 
 			for {
 				// Compare current vs end
 				if bytesCompare(curr, endIPv4) > 0 {
 					break
 				}
+
+				// Safety limits
+				if rangeCount >= config.MaxIPsPerRange {
+					break
+				}
+				if len(ips) >= config.MaxTotalBindIPs {
+					break
+				}
+
 				ips = append(ips, curr.String())
+				rangeCount++
 
 				// Increment IP
 				for i := 3; i >= 0; i-- {
@@ -375,6 +404,18 @@ func parseBindIPs(s string) []string {
 		}
 	}
 	return ips
+}
+
+// ipRangeSize calculates the number of IPs in a range (approximate for safety check).
+func ipRangeSize(start, end net.IP) int {
+	// Simple calculation for IPv4
+	startVal := int(start[0])<<24 | int(start[1])<<16 | int(start[2])<<8 | int(start[3])
+	endVal := int(end[0])<<24 | int(end[1])<<16 | int(end[2])<<8 | int(end[3])
+	size := endVal - startVal + 1
+	if size < 0 {
+		return 0
+	}
+	return size
 }
 
 func bytesCompare(a, b []byte) int {

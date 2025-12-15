@@ -3,12 +3,12 @@ package strategy
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"net/http"
 	"time"
 
 	"github.com/srtdog64/loadtestforge/internal/config"
+	"github.com/srtdog64/loadtestforge/internal/errors"
 	"github.com/srtdog64/loadtestforge/internal/netutil"
 )
 
@@ -31,8 +31,8 @@ func NewNormalHTTP(timeout time.Duration, bindIP string) *NormalHTTP {
 	}
 
 	dialerCfg := netutil.DialerConfig{
-		Timeout:       30 * time.Second,
-		KeepAlive:     30 * time.Second,
+		Timeout:       config.DefaultDialerTimeout,
+		KeepAlive:     config.DefaultDialerKeepAlive,
 		LocalAddr:     netutil.NewLocalTCPAddr(bindIP),
 		BindConfig:    netutil.NewBindConfig(bindIP),
 		TLSSkipVerify: false,
@@ -68,7 +68,7 @@ func (n *NormalHTTP) Execute(ctx context.Context, target Target) error {
 
 	req, err := http.NewRequestWithContext(ctx, target.Method, target.URL, body)
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return errors.ClassifyAndWrap(err, "failed to create request")
 	}
 
 	for k, v := range target.Headers {
@@ -80,14 +80,16 @@ func (n *NormalHTTP) Execute(ctx context.Context, target Target) error {
 	latency := time.Since(startTime)
 
 	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
+		return errors.ClassifyAndWrap(err, "request failed")
 	}
 	defer resp.Body.Close()
 
-	io.Copy(io.Discard, resp.Body)
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		return errors.ClassifyAndWrap(err, "failed to read response body")
+	}
 
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("http error: %d", resp.StatusCode)
+		return errors.NewHTTPError(resp.StatusCode, resp.Status, "")
 	}
 
 	n.RecordLatency(latency)
