@@ -48,7 +48,7 @@ func DefaultRUDYConfig() RUDYConfig {
 		PersistConnections:    true,
 		MaxRequestsPerSession: 10,
 		KeepAliveTimeout:      600 * time.Second,
-		SessionLifetime:       3600 * time.Second,
+		SessionLifetime:       0, // 0 = unlimited (hold until server closes)
 		UseJSON:               false,
 		UseMultipart:          false,
 		RandomizePath:         false,
@@ -224,6 +224,11 @@ func (m *RUDYSessionManager) StoreSession(session *RUDYSession) {
 
 // CleanupExpired removes expired sessions.
 func (m *RUDYSessionManager) CleanupExpired() int {
+	// If sessionExpiry is 0, sessions never expire (hold until server closes)
+	if m.sessionExpiry == 0 {
+		return 0
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

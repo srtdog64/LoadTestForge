@@ -51,7 +51,10 @@ func NewNormalHTTP(timeout time.Duration, bindIP string) *NormalHTTP {
 
 // NewNormalHTTPWithConfig creates a NormalHTTP strategy from StrategyConfig.
 func NewNormalHTTPWithConfig(cfg *config.StrategyConfig, bindIP string) *NormalHTTP {
-	return NewNormalHTTP(cfg.Timeout, bindIP)
+	n := NewNormalHTTP(cfg.Timeout, bindIP)
+	// Apply session lifetime from config (0 = unlimited, hold until server closes)
+	n.Common.SessionLifetime = cfg.SessionLifetime
+	return n
 }
 
 func (n *NormalHTTP) Execute(ctx context.Context, target Target) error {

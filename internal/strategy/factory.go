@@ -52,16 +52,10 @@ func (f *StrategyFactory) CreateByType(strategyType string) AttackStrategy {
 		return NewHTTPFloodWithConfig(f.Config, f.BindIP, "GET")
 
 	case "h2-flood":
-		return NewH2Flood(f.Config.MaxStreams, f.Config.BurstSize, f.BindIP)
+		return NewH2FloodWithConfig(f.Config, f.BindIP)
 
 	case "heavy-payload":
-		return NewHeavyPayload(
-			f.Config.Timeout,
-			f.Config.PayloadType,
-			f.Config.PayloadDepth,
-			f.Config.PayloadSize,
-			f.BindIP,
-		)
+		return NewHeavyPayloadWithConfig(f.Config, f.BindIP)
 
 	case "hulk":
 		return NewHULK(f.Config, f.BindIP)

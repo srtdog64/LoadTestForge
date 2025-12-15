@@ -94,13 +94,16 @@ func (h *HeavyPayload) rebuildClient() {
 
 // NewHeavyPayloadWithConfig creates a HeavyPayload strategy from StrategyConfig.
 func NewHeavyPayloadWithConfig(cfg *config.StrategyConfig, bindIP string) *HeavyPayload {
-	return NewHeavyPayload(
+	h := NewHeavyPayload(
 		cfg.Timeout,
 		cfg.PayloadType,
 		cfg.PayloadDepth,
 		cfg.PayloadSize,
 		bindIP,
 	)
+	// Apply session lifetime from config (0 = unlimited, hold until server closes)
+	h.Common.SessionLifetime = cfg.SessionLifetime
+	return h
 }
 
 func (h *HeavyPayload) Execute(ctx context.Context, target Target) error {

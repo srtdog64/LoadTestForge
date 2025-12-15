@@ -42,7 +42,7 @@ func NewH2Flood(maxStreams int, burstSize int, bindIP string) *H2Flood {
 	}
 
 	common := DefaultCommonConfig()
-	common.SessionLifetime = 5 * time.Minute
+	// SessionLifetime = 0 means hold until server closes (default)
 
 	return &H2Flood{
 		BaseStrategy:         NewBaseStrategy(bindIP, common),
@@ -70,12 +70,15 @@ func (h *H2Flood) Execute(ctx context.Context, target Target) error {
 		return h.executeH2C(ctx, target, parsedURL, host)
 	}
 
+	// Create session context: 0 = unlimited (hold until server closes or parent ctx cancels)
+	var sessionCtx context.Context
+	var cancel context.CancelFunc
 	sessionLifetime := h.GetSessionLifetime()
-	if sessionLifetime == 0 {
-		sessionLifetime = 5 * time.Minute // Default for H2
+	if sessionLifetime > 0 {
+		sessionCtx, cancel = context.WithTimeout(ctx, sessionLifetime)
+	} else {
+		sessionCtx, cancel = context.WithCancel(ctx)
 	}
-
-	sessionCtx, cancel := context.WithTimeout(ctx, sessionLifetime)
 	defer cancel()
 
 	// Establish TLS connection with ALPN for HTTP/2
@@ -212,12 +215,15 @@ func (h *H2Flood) sendStream(ctx context.Context, cc *http2.ClientConn, targetUR
 
 // executeH2C handles HTTP/2 over cleartext (h2c) - rare but possible
 func (h *H2Flood) executeH2C(ctx context.Context, target Target, parsedURL *url.URL, host string) error {
+	// Create session context: 0 = unlimited (hold until server closes or parent ctx cancels)
+	var sessionCtx context.Context
+	var cancel context.CancelFunc
 	sessionLifetime := h.GetSessionLifetime()
-	if sessionLifetime == 0 {
-		sessionLifetime = 5 * time.Minute
+	if sessionLifetime > 0 {
+		sessionCtx, cancel = context.WithTimeout(ctx, sessionLifetime)
+	} else {
+		sessionCtx, cancel = context.WithCancel(ctx)
 	}
-
-	sessionCtx, cancel := context.WithTimeout(ctx, sessionLifetime)
 	defer cancel()
 
 	dialer := &net.Dialer{

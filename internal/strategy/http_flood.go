@@ -82,7 +82,7 @@ func (h *HTTPFlood) rebuildClient() {
 
 // NewHTTPFloodWithConfig creates an HTTPFlood strategy from StrategyConfig.
 func NewHTTPFloodWithConfig(cfg *config.StrategyConfig, bindIP string, method string) *HTTPFlood {
-	return NewHTTPFlood(
+	h := NewHTTPFlood(
 		cfg.Timeout,
 		method,
 		cfg.PostDataSize,
@@ -91,6 +91,9 @@ func NewHTTPFloodWithConfig(cfg *config.StrategyConfig, bindIP string, method st
 		cfg.EnableStealth,
 		cfg.RandomizePath,
 	)
+	// Apply session lifetime from config (0 = unlimited, hold until server closes)
+	h.Common.SessionLifetime = cfg.SessionLifetime
+	return h
 }
 
 // generateCookiePool creates a pool of realistic session cookies

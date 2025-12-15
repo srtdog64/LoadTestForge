@@ -171,7 +171,7 @@ func parseFlags() *config.Config {
 	flag.BoolVar(&cfg.Strategy.UseJSON, "use-json", false, "Use JSON encoding for rudy")
 	flag.BoolVar(&cfg.Strategy.UseMultipart, "use-multipart", false, "Use multipart/form-data encoding for rudy")
 	flag.IntVar(&cfg.Strategy.EvasionLevel, "evasion-level", config.EvasionLevelNormal, "Evasion level for rudy (1=basic, 2=normal, 3=aggressive)")
-	flag.DurationVar(&cfg.Strategy.SessionLifetime, "session-lifetime", config.DefaultSessionLifetime, "Session lifetime for rudy")
+	flag.DurationVar(&cfg.Strategy.SessionLifetime, "session-lifetime", config.DefaultSessionLifetime, "Session lifetime (0=unlimited, hold until server closes)")
 	flag.IntVar(&cfg.Strategy.SendBufferSize, "send-buffer", config.DefaultSendBufferSize, "TCP send buffer size for rudy (small = slower)")
 
 	// Session failure settings
