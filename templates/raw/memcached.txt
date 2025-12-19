@@ -9,7 +9,7 @@
 # L3 :: IP Header
 45       # Version: 4, Header Length: 20
 00       # Differentiated Service Field: 0
-00 2f    # Total Length: 47
+@LEN:2   # Total Length: auto
 KK GG    # Identification (Random)
 40 00    # Flags: Don't Fragment
 40       # Time To Live: 64
@@ -21,7 +21,7 @@ KK GG    # Identification (Random)
 # L4 :: UDP Header
 GK GG    # Source Port (Random)
 2b cb    # Destination Port: 11211 (Memcached)
-00 1b    # UDP Length: 27
+@UDPLEN:2 # UDP Length: auto
 @UDPCHK:2 # UDP Checksum
 
 # Memcached Protocol

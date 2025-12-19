@@ -9,7 +9,7 @@
 # L3 :: IP Header
 45       # Version: 4, Header Length: 20
 00       # Differentiated Service Field: 0
-00 28    # Total Length: 40 (20 IP + 20 TCP)
+@LEN:2   # Total Length: auto
 KK GG    # Identification (Random)
 40 00    # Flags: Don't Fragment
 40       # Time To Live: 64

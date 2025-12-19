@@ -180,6 +180,8 @@ func getDefaultSize(name string) int {
 		return 16
 	case "@SPORT", "@DPORT", "@LEN", "@UDPLEN", "@ID":
 		return 2
+	case "@PLEN":
+		return 2
 	case "@IPCHK", "@UDPCHK", "@TCPCHK", "@ICMPCHK", "@IGMPCHK":
 		return 2
 	case "@ROOTID", "@BRIDGEID":
@@ -334,19 +336,34 @@ func (t *Template) calculateLengths(packet []byte) {
 		l2Offset = 14 // Ethernet header size
 	}
 
+	isIPv6 := t.isIPv6(packet)
 	ipHeaderLen := 20 // Standard IPv4 header
+	if isIPv6 {
+		ipHeaderLen = 40
+	}
 
 	for _, v := range t.Variables {
 		switch v.Name {
 		case "@LEN":
-			// IP Total Length = packet length - L2 header
-			totalLen := len(packet) - l2Offset
-			binary.BigEndian.PutUint16(packet[v.Offset:], uint16(totalLen))
+			if !isIPv6 {
+				// IPv4 Total Length = packet length - L2 header
+				totalLen := len(packet) - l2Offset
+				binary.BigEndian.PutUint16(packet[v.Offset:], uint16(totalLen))
+			}
+
+		case "@PLEN":
+			// IPv6 Payload Length = packet length - L2 header - IPv6 header
+			payloadLen := len(packet) - l2Offset - ipHeaderLen
+			if payloadLen >= 0 {
+				binary.BigEndian.PutUint16(packet[v.Offset:], uint16(payloadLen))
+			}
 
 		case "@UDPLEN":
 			// UDP Length = packet length - L2 header - IP header
 			udpLen := len(packet) - l2Offset - ipHeaderLen
-			binary.BigEndian.PutUint16(packet[v.Offset:], uint16(udpLen))
+			if udpLen >= 0 {
+				binary.BigEndian.PutUint16(packet[v.Offset:], uint16(udpLen))
+			}
 		}
 	}
 }
@@ -358,13 +375,17 @@ func (t *Template) calculateChecksums(packet []byte) {
 		l2Offset = 14
 	}
 
+	isIPv6 := t.isIPv6(packet)
 	ipHeaderLen := 20
+	if isIPv6 {
+		ipHeaderLen = 40
+	}
 
 	for _, v := range t.Variables {
 		switch v.Name {
 		case "@IPCHK":
 			// IP header checksum
-			if len(packet) >= l2Offset+ipHeaderLen {
+			if !isIPv6 && len(packet) >= l2Offset+ipHeaderLen {
 				// Zero out checksum field first
 				binary.BigEndian.PutUint16(packet[v.Offset:], 0)
 				// Calculate checksum over IP header
@@ -378,7 +399,7 @@ func (t *Template) calculateChecksums(packet []byte) {
 			if len(packet) >= l2Offset+ipHeaderLen+8 {
 				// Zero out checksum field first
 				binary.BigEndian.PutUint16(packet[v.Offset:], 0)
-				checksum := t.calculateUDPChecksum(packet, l2Offset)
+				checksum := t.calculateUDPChecksum(packet, l2Offset, isIPv6, ipHeaderLen)
 				if checksum == 0 {
 					checksum = 0xFFFF // UDP checksum of 0 is transmitted as 0xFFFF
 				}
@@ -389,7 +410,7 @@ func (t *Template) calculateChecksums(packet []byte) {
 			// TCP checksum (with pseudo-header)
 			if len(packet) >= l2Offset+ipHeaderLen+20 {
 				binary.BigEndian.PutUint16(packet[v.Offset:], 0)
-				checksum := t.calculateTCPChecksum(packet, l2Offset)
+				checksum := t.calculateTCPChecksum(packet, l2Offset, isIPv6, ipHeaderLen)
 				binary.BigEndian.PutUint16(packet[v.Offset:], checksum)
 			}
 
@@ -435,57 +456,115 @@ func calculateChecksum(data []byte) uint16 {
 }
 
 // calculateUDPChecksum calculates UDP checksum including pseudo-header
-func (t *Template) calculateUDPChecksum(packet []byte, l2Offset int) uint16 {
-	ipHeaderLen := 20
-
-	// Extract source and destination IP
-	srcIP := packet[l2Offset+12 : l2Offset+16]
-	dstIP := packet[l2Offset+16 : l2Offset+20]
-
+func (t *Template) calculateUDPChecksum(packet []byte, l2Offset int, isIPv6 bool, ipHeaderLen int) uint16 {
 	// UDP data (header + payload)
 	udpData := packet[l2Offset+ipHeaderLen:]
 	udpLen := len(udpData)
+	proto := byte(17) // UDP
 
-	// Build pseudo-header
+	if isIPv6 {
+		srcIP := packet[l2Offset+8 : l2Offset+24]
+		dstIP := packet[l2Offset+24 : l2Offset+40]
+		if len(srcIP) < 16 || len(dstIP) < 16 {
+			return 0
+		}
+
+		pseudoHeader := make([]byte, 40)
+		copy(pseudoHeader[0:16], srcIP)
+		copy(pseudoHeader[16:32], dstIP)
+		pseudoHeader[32] = byte(udpLen >> 24)
+		pseudoHeader[33] = byte(udpLen >> 16)
+		pseudoHeader[34] = byte(udpLen >> 8)
+		pseudoHeader[35] = byte(udpLen)
+		pseudoHeader[39] = proto
+
+		checksumData := append(pseudoHeader, udpData...)
+		return calculateChecksum(checksumData)
+	}
+
+	// IPv4
+	srcIP := packet[l2Offset+12 : l2Offset+16]
+	dstIP := packet[l2Offset+16 : l2Offset+20]
+
 	pseudoHeader := make([]byte, 12)
 	copy(pseudoHeader[0:4], srcIP)
 	copy(pseudoHeader[4:8], dstIP)
-	pseudoHeader[8] = 0              // Zero
-	pseudoHeader[9] = 17             // Protocol (UDP)
+	pseudoHeader[8] = 0
+	pseudoHeader[9] = proto
 	pseudoHeader[10] = byte(udpLen >> 8)
 	pseudoHeader[11] = byte(udpLen)
 
-	// Concatenate pseudo-header and UDP data
 	checksumData := append(pseudoHeader, udpData...)
-
 	return calculateChecksum(checksumData)
 }
 
 // calculateTCPChecksum calculates TCP checksum including pseudo-header
-func (t *Template) calculateTCPChecksum(packet []byte, l2Offset int) uint16 {
-	ipHeaderLen := 20
-
-	// Extract source and destination IP
-	srcIP := packet[l2Offset+12 : l2Offset+16]
-	dstIP := packet[l2Offset+16 : l2Offset+20]
-
+func (t *Template) calculateTCPChecksum(packet []byte, l2Offset int, isIPv6 bool, ipHeaderLen int) uint16 {
 	// TCP data (header + payload)
 	tcpData := packet[l2Offset+ipHeaderLen:]
 	tcpLen := len(tcpData)
+	proto := byte(6) // TCP
 
-	// Build pseudo-header
+	if isIPv6 {
+		srcIP := packet[l2Offset+8 : l2Offset+24]
+		dstIP := packet[l2Offset+24 : l2Offset+40]
+		if len(srcIP) < 16 || len(dstIP) < 16 {
+			return 0
+		}
+
+		pseudoHeader := make([]byte, 40)
+		copy(pseudoHeader[0:16], srcIP)
+		copy(pseudoHeader[16:32], dstIP)
+		pseudoHeader[32] = byte(tcpLen >> 24)
+		pseudoHeader[33] = byte(tcpLen >> 16)
+		pseudoHeader[34] = byte(tcpLen >> 8)
+		pseudoHeader[35] = byte(tcpLen)
+		pseudoHeader[39] = proto
+
+		checksumData := append(pseudoHeader, tcpData...)
+		return calculateChecksum(checksumData)
+	}
+
+	// IPv4
+	srcIP := packet[l2Offset+12 : l2Offset+16]
+	dstIP := packet[l2Offset+16 : l2Offset+20]
+
 	pseudoHeader := make([]byte, 12)
 	copy(pseudoHeader[0:4], srcIP)
 	copy(pseudoHeader[4:8], dstIP)
-	pseudoHeader[8] = 0              // Zero
-	pseudoHeader[9] = 6              // Protocol (TCP)
+	pseudoHeader[8] = 0
+	pseudoHeader[9] = proto
 	pseudoHeader[10] = byte(tcpLen >> 8)
 	pseudoHeader[11] = byte(tcpLen)
 
-	// Concatenate pseudo-header and TCP data
 	checksumData := append(pseudoHeader, tcpData...)
-
 	return calculateChecksum(checksumData)
+}
+
+// isIPv6 tries to determine whether the packet uses IPv6
+func (t *Template) isIPv6(packet []byte) bool {
+	l2Offset := 0
+	if t.HasL2Header {
+		l2Offset = 14
+	}
+
+	if len(packet) > l2Offset {
+		version := packet[l2Offset] >> 4
+		if version == 6 {
+			return true
+		}
+		if version == 4 {
+			return false
+		}
+	}
+
+	for _, v := range t.Variables {
+		if v.Name == "@SIP6" || v.Name == "@DIP6" {
+			return true
+		}
+	}
+
+	return false
 }
 
 // GetPacketWithoutL2 returns the packet without Ethernet header

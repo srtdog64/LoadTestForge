@@ -9,7 +9,7 @@
 # L3 :: IP Header
 45       # Version: 4, Header Length: 20
 00       # Differentiated Service Field: 0
-00 1d    # Total Length: 29 (20 IP + 8 UDP + 1 data)
+@LEN:2   # Total Length: auto
 KK GG    # Identification (Random)
 40 00    # Flags: Don't Fragment
 40       # Time To Live: 64
@@ -21,7 +21,7 @@ KK GG    # Identification (Random)
 # L4 :: UDP Header
 GK GG    # Source Port (Random)
 00 13    # Destination Port: 19 (CHARGEN)
-00 09    # UDP Length: 9 (8 header + 1 data)
+@UDPLEN:2 # UDP Length: auto
 @UDPCHK:2 # UDP Checksum
 
 # Data (1 byte trigger)
