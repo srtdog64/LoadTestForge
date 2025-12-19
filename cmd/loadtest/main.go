@@ -131,6 +131,10 @@ func parseFlags() *config.Config {
 	flag.StringVar(&cfg.Strategy.Type, "strategy", "keepalive", "Attack strategy (normal|keepalive|slowloris|slowloris-keepalive|slow-post|slow-read|http-flood|h2-flood|heavy-payload|rudy|tcp-flood)")
 	flag.StringVar(&cfg.BindIP, "bind-ip", "", "Source IP address(es) to bind, comma-separated for multiple (e.g., 192.168.1.100,192.168.1.101)")
 	flag.BoolVar(&cfg.Strategy.BindRandom, "bind-random", false, "Randomize source IP selection from the bind range (default: round-robin)")
+	flag.StringVar(&cfg.Strategy.PacketTemplate, "packet", "", "Path to packet template for raw strategy (e.g. templates/l4/udp_flood.txt)")
+	var spoofIPsStr string
+	flag.StringVar(&spoofIPsStr, "spoof-ips", "", "Comma-separated IPs to spoof (for raw strategy only)")
+	flag.BoolVar(&cfg.Strategy.RandomSpoof, "random-spoof", false, "Use fully random source IPs (for raw strategy only)")
 
 	// Performance settings
 	flag.IntVar(&cfg.Performance.TargetSessions, "sessions", config.DefaultTargetSessions, "Target concurrent sessions")
@@ -203,6 +207,10 @@ func parseFlags() *config.Config {
 	flag.Float64Var(&cfg.Thresholds.MaxTimeoutRate, "max-timeout-rate", 10.0, "Maximum timeout rate (%) for pass")
 
 	flag.Parse()
+
+	if spoofIPsStr != "" {
+		cfg.Strategy.SpoofIPs = parseBindIPs(spoofIPsStr) // Reuse parser
+	}
 
 	return cfg
 }

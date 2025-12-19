@@ -1,0 +1,28 @@
+# IGMP Membership Query Packet Template
+# L3 IGMP 공격용
+
+# L2 :: Ethernet HEADER
+01 00 5e 00 00 01  # dst MAC: Multicast
+@SMAC:6            # src MAC
+08 00              # Type: IP
+
+# L3 :: IP Header
+46       # Version: 4, Header Length: 24 (with options)
+c0       # DSCP: CS6 (Network Control)
+00 20    # Total Length: 32
+00 00    # Identification
+40 00    # Flags: Don't Fragment
+01       # Time To Live: 1
+02       # Protocol: IGMP
+@IPCHK:2 # Header Checksum
+@SIP:4   # Source IP
+e0 00 00 01  # Destination IP: 224.0.0.1 (All Hosts)
+
+# IP Options (Router Alert)
+94 04 00 00  # Router Alert Option
+
+# L4 :: IGMP Header
+11       # Type: Membership Query
+64       # Max Response Time: 100 (10 seconds)
+@IGMPCHK:2 # Checksum
+00 00 00 00  # Group Address: 0.0.0.0 (General Query)

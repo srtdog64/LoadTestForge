@@ -1,0 +1,28 @@
+# ICMPv6 Echo Request Packet Template
+# L3 ICMPv6 Ping 공격용
+
+# L2 :: Ethernet HEADER
+@DMAC:6  # dst MAC
+@SMAC:6  # src MAC
+86 dd    # Type: IPv6
+
+# L3 :: IPv6 Header (40 bytes)
+60 00 00 00  # Version: 6, Traffic Class: 0, Flow Label: 0
+00 40        # Payload Length: 64 (ICMPv6 header + data)
+3a           # Next Header: ICMPv6 (58)
+40           # Hop Limit: 64
+@SIP6:16     # Source IPv6 Address
+@DIP6:16     # Destination IPv6 Address
+
+# L4 :: ICMPv6 Header
+80           # Type: Echo Request
+00           # Code: 0
+@ICMPCHK:2   # Checksum
+KK GG        # Identifier (Random)
+00 01        # Sequence Number
+
+# ICMPv6 Data (56 bytes)
+00 00 00 00 00 00 00 00  # Timestamp
+61 62 63 64 65 66 67 68 69 6a 6b 6c 6d 6e 6f 70  # abcdefghijklmnop
+71 72 73 74 75 76 77 61 62 63 64 65 66 67 68 69  # qrstuvwabcdefghi
+6a 6b 6c 6d 6e 6f 70 71 72 73 74 75 76 77 78 79  # jklmnopqrstuvwxy

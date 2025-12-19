@@ -1,0 +1,38 @@
+# DNS Query Packet Template
+# L4 DNS Query Flood 공격용
+
+# L2 :: Ethernet HEADER
+@DMAC:6  # dst MAC
+@SMAC:6  # src MAC
+08 00    # Type: IP
+
+# L3 :: IP Header
+45       # Version: 4, Header Length: 20
+00       # Differentiated Service Field: 0
+00 3c    # Total Length: 60
+KK GG    # Identification (Random)
+40 00    # Flags: Don't Fragment
+40       # Time To Live: 64
+11       # Protocol: UDP
+@IPCHK:2 # Header Checksum
+@SIP:4   # Source IP
+@DIP:4   # Destination IP
+
+# L4 :: UDP Header
+GK GG    # Source Port (Random)
+00 35    # Destination Port: 53 (DNS)
+00 28    # UDP Length: 40
+@UDPCHK:2 # UDP Checksum
+
+# DNS Query
+KK GG    # Transaction ID (Random)
+01 00    # Flags: Standard Query, Recursion Desired
+00 01    # Questions: 1
+00 00    # Answer RRs: 0
+00 00    # Authority RRs: 0
+00 00    # Additional RRs: 0
+
+# Query: www.example.com (Type A, Class IN)
+03 77 77 77 07 65 78 61 6d 70 6c 65 03 63 6f 6d 00  # www.example.com
+00 01    # Type: A
+00 01    # Class: IN

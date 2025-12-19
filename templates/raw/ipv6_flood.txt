@@ -1,0 +1,24 @@
+# IPv6 Flood Packet Template
+# L3 IPv6 UDP 공격용
+
+# L2 :: Ethernet HEADER
+@DMAC:6  # dst MAC
+@SMAC:6  # src MAC
+86 dd    # Type: IPv6
+
+# L3 :: IPv6 Header (40 bytes)
+60 00 00 00  # Version: 6, Traffic Class: 0, Flow Label: 0
+00 40        # Payload Length: 64 (UDP header + data)
+11           # Next Header: UDP
+40           # Hop Limit: 64
+@SIP6:16     # Source IPv6 Address
+@DIP6:16     # Destination IPv6 Address
+
+# L4 :: UDP Header
+GK GG        # Source Port (Random)
+@DPORT:2     # Destination Port
+00 40        # Length: 64
+@UDPCHK:2    # Checksum
+
+# Data (56 bytes)
+@DATA:56     # Random payload

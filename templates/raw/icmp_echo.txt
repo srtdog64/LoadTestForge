@@ -1,0 +1,32 @@
+# ICMP Echo (Ping) Packet Template
+# L3 ICMP 공격용
+
+# L2 :: Ethernet HEADER
+@DMAC:6  # dst MAC
+@SMAC:6  # src MAC
+08 00    # Type: IP
+
+# L3 :: IP Header
+45       # Version: 4, Header Length: 20
+00       # Differentiated Service Field: 0
+00 54    # Total Length: 84 (20 IP + 8 ICMP + 56 data)
+00 00    # Identification
+40 00    # Flags: Don't Fragment
+40       # Time To Live: 64
+01       # Protocol: ICMP
+@IPCHK:2 # Header Checksum
+@SIP:4   # Source IP
+@DIP:4   # Destination IP
+
+# L4 :: ICMP Header
+08       # Type: Echo Request
+00       # Code: 0
+@ICMPCHK:2 # Checksum
+KK GG    # Identifier (Random)
+00 01    # Sequence Number
+
+# ICMP Data (56 bytes)
+00 00 00 00 00 00 00 00  # Timestamp
+61 62 63 64 65 66 67 68 69 6a 6b 6c 6d 6e 6f 70  # abcdefghijklmnop
+71 72 73 74 75 76 77 61 62 63 64 65 66 67 68 69  # qrstuvwabcdefghi
+6a 6b 6c 6d 6e 6f 70 71 72 73 74 75 76 77 78 79  # jklmnopqrstuvwxy

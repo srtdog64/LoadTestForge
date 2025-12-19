@@ -1,0 +1,76 @@
+# DNS Reflection Packet Template
+# 김재건님 제공 템플릿
+
+# L2
+@DMAC:6 # dmac
+@SMAC:6  # src MAC
+08 00 # IP
+
+# L3::IP
+45  # version 4, header 20
+00  # Differentiated Service Field : 0 ( DSCP 0, Default; ECN : 0)
+01 7f   # Total Length
+00 00   # Identification
+00  # Don't fragment
+00  # fragment offset
+37  # time to live
+11  # UDP
+f8 63   # IP checksum
+@SIP:4   # sip
+@DIP:4   # dip
+
+# L4::UDP
+GK GG   # sport
+@DPORT:2 # dport
+3f cf   # UDP checksum
+
+# DNS::response
+KK GG   # transaction ID
+81 80   # flags (Standard query response: No error)
+00 01   # questions (1)
+00 02   # answer RRS
+00 09   # Authority RRs
+00 06   # Additional RRs
+
+# DNS::Query
+03 77 77 77 05 79 61 68 6f 6f 03 63 6f 6d 00    # www.yahoo.com
+00 01   # type A (Host address)
+00 01   # class: IN
+
+# DNS::Answers
+c0 0c 00 05 00 01 00 00 2b ec 00 1a 03 77 77 77 09 79 61 68 6f 6f 2d 68 74 33 06 61 6b 61 64 6e 73 03 6e 65 74 00
+    # www.yahoo.com: type CNAME, class IN, cname www.yahoo-ht3.akadns.net
+c0 2b 00 01 00 01 00 00 00 31 00 04 d1 83 24 9e
+    # www.yahoo-ht3.akadns.net: type A, class IN, addr 209.131.36.158
+# DNS::Authoritative nameservers
+c0 39 00 02 00 01 00 02 7a 8c 00 07 04 65 75 72 31 c0 39
+    # akadns.net: type NS, class IN, ns eur1.akadns.net
+c0 39 00 02 00 01 00 02 7a 8c 00 07 04 75 73 65 33 c0 39
+    # akadns.net: type NS, class IN, ns use3.akadns.net
+c0 39 00 02 00 01 00 02 7a 8c 00 07 04 75 73 65 34 c0 39
+    # akadns.net: type NS, class IN, ns use4.akadns.net
+c0 39 00 02 00 01 00 02 7a 8c 00 07 04 75 73 77 32 c0 39
+    # akadns.net: type NS, class IN, ns usw2.akadns.net
+c0 39 00 02 00 01 00 02 7a 8c 00 08 05 61 73 69 61 39 c0 39
+    # akadns.net: type NS, class IN, ns asia9.akadns.net
+c0 39 00 02 00 01 00 02 7a 8c 00 0f 02 7a 61 06 61 6b 61 64 6e 73 03 6f 72 67 00
+    # akadns.net: type NS, class IN, ns za.akadns.org
+c0 39 00 02 00 01 00 02 7a 8c 00 05 02 7a 62 c0 c4
+    # akadns.net: type NS, class IN, ns zb.akadns.org
+c0 39 00 02 00 01 00 02 7a 8c 00 05 02 7a 63 c0 c4
+    # akadns.net: type NS, class IN, ns zc.akadns.org
+c0 39 00 02 00 01 00 02 7a 8c 00 05 02 7a 64 c0 c4
+    # akadns.net: type NS, class IN, ns zd.akadns.org
+# DNS::Additional records
+c0 c1 00 01 00 01 00 00 01 bf 00 04 c3 db 03 a9
+    # za.akadns.org: type A, class IN, addr 195.219.3.169
+c0 dc 00 01 00 01 00 00 00 95 00 04 0c b7 7d 05
+    # zb.akadns.org: type A, class IN, addr 12.183.125.5
+c0 ed 00 01 00 01 00 00 0c b1 00 04 7c d3 28 04
+    # zc.akadns.org: type A, class IN, addr 124.211.40.4
+c0 fe 00 01 00 01 00 00 09 92 00 04 cc 02 b2 85
+    # zd.akadns.org: type A, class IN, addr 204.2.178.133
+c0 61 00 01 00 01 00 01 46 17 00 04 c3 3b 2c 86
+    # eur1.akadns.net: type A, class IN, addr 195.59.44.134
+c0 9a 00 01 00 01 00 01 46 34 00 04 3f d1 03 84
+    # usw2.akadns.net: type A, class IN, addr 63.209.3.132

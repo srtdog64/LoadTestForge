@@ -1,0 +1,21 @@
+# ARP Request Packet Template
+# L2 ARP 공격용
+
+# L2 :: Ethernet HEADER
+ff ff ff ff ff ff  # dst MAC: Broadcast
+@SMAC:6            # src MAC
+08 06              # Type: ARP
+
+# ARP Header
+00 01    # Hardware Type: Ethernet
+08 00    # Protocol Type: IP
+06       # Hardware Size: 6
+04       # Protocol Size: 4
+00 01    # Opcode: Request (1)
+@SMAC:6  # Sender MAC Address
+@SIP:4   # Sender IP Address
+00 00 00 00 00 00  # Target MAC Address (unknown)
+@DIP:4   # Target IP Address
+
+# Padding (to reach minimum Ethernet frame size)
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00

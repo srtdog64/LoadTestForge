@@ -1,0 +1,30 @@
+# TCP SYN Flood Packet Template
+# L4 TCP SYN 공격용
+
+# L2 :: Ethernet HEADER
+@DMAC:6  # dst MAC
+@SMAC:6  # src MAC
+08 00    # Type: IP
+
+# L3 :: IP Header
+45       # Version: 4, Header Length: 20
+00       # Differentiated Service Field: 0
+00 28    # Total Length: 40 (20 IP + 20 TCP)
+KK GG    # Identification (Random)
+40 00    # Flags: Don't Fragment
+40       # Time To Live: 64
+06       # Protocol: TCP
+@IPCHK:2 # Header Checksum
+@SIP:4   # Source IP
+@DIP:4   # Destination IP
+
+# L4 :: TCP Header
+GK GG    # Source Port (Random)
+@DPORT:2 # Destination Port
+KK KK KK KK  # Sequence Number (Random)
+00 00 00 00  # Acknowledgment Number
+50       # Data Offset: 5 (20 bytes)
+02       # Flags: SYN
+ff ff    # Window Size: 65535
+@TCPCHK:2 # Checksum
+00 00    # Urgent Pointer
