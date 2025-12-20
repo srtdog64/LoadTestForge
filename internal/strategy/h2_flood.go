@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -30,6 +31,7 @@ type H2Flood struct {
 	activeStreams        int64
 	requestsSent         int64
 	streamFailures       int64
+	bufPool              *sync.Pool
 }
 
 // NewH2Flood creates a new H2Flood strategy.
@@ -48,6 +50,12 @@ func NewH2Flood(maxStreams int, burstSize int, bindIP string) *H2Flood {
 		BaseStrategy:         NewBaseStrategy(bindIP, common),
 		maxConcurrentStreams: maxStreams,
 		streamBurstSize:      burstSize,
+		bufPool: &sync.Pool{
+			New: func() interface{} {
+				// 32KB buffer for io.CopyBuffer default behavior
+				return make([]byte, 32*1024)
+			},
+		},
 	}
 }
 
@@ -200,7 +208,11 @@ func (h *H2Flood) sendStream(ctx context.Context, cc *http2.ClientConn, targetUR
 	}
 
 	// Discard response body quickly to free stream
-	io.Copy(io.Discard, resp.Body)
+	// Use io.CopyBuffer with pooled buffer to avoid 32KB alloc per stream
+	buf := h.bufPool.Get().([]byte)
+	defer h.bufPool.Put(buf)
+
+	io.CopyBuffer(io.Discard, resp.Body, buf)
 	resp.Body.Close()
 
 	atomic.AddInt64(&h.requestsSent, 1)

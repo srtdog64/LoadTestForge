@@ -245,11 +245,9 @@ func (t *Template) UpdatePacket(packet []byte, params PacketParams, init bool) {
 			if params.SrcMAC != nil {
 				copy(packet[v.Offset:], params.SrcMAC)
 			} else {
-				// Random MAC
-				mac := make([]byte, 6)
-				rand.Read(mac)
-				mac[0] = (mac[0] | 0x02) & 0xfe // Locally administered, unicast
-				copy(packet[v.Offset:], mac)
+				// Random MAC directly into buffer (zero-alloc)
+				rand.Read(packet[v.Offset : v.Offset+6])
+				packet[v.Offset] = (packet[v.Offset] | 0x02) & 0xfe // Locally administered, unicast
 			}
 
 		case "@SIP":
@@ -300,10 +298,8 @@ func (t *Template) UpdatePacket(packet []byte, params PacketParams, init bool) {
 			binary.BigEndian.PutUint32(packet[v.Offset:], rand.Uint32())
 
 		case "@DATA":
-			// Fill with random data
-			randData := make([]byte, v.Size)
-			rand.Read(randData)
-			copy(packet[v.Offset:], randData)
+			// Fill with random data directly into buffer (zero-alloc)
+			rand.Read(packet[v.Offset : v.Offset+v.Size])
 
 		case "@ROOTID":
 			// STP Root Bridge ID: Priority (2 bytes) + MAC (6 bytes)

