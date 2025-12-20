@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"net"
 	"net/url"
+	"sync"
 	"syscall"
 
 	"github.com/srtdog64/loadtestforge/internal/config"
@@ -23,21 +24,46 @@ type RawStrategy struct {
 	template     *raw.Template
 	spoofIPs     []string
 	randomSpoof  bool
-	socketFD     syscall.Handle // For Windows raw socket (keep specific handle type if needed)
+	socketFD     syscall.Handle // For Windows raw socket
+	bufferPool   *sync.Pool
 }
 
 func NewRawStrategy(cfg *config.StrategyConfig, bindIP string, templatePath string) *RawStrategy {
 	loader := raw.NewLoader(".")
 	tmpl, _ := loader.Load(templatePath)
 
-	return &RawStrategy{
+	s := &RawStrategy{
 		BaseStrategy: NewBaseStrategyFromConfig(cfg, bindIP),
 		templatePath: templatePath,
 		template:     tmpl,
 		spoofIPs:     cfg.SpoofIPs,
 		randomSpoof:  cfg.RandomSpoof,
-		socketFD:     syscall.InvalidHandle, // Init logic needed
+		socketFD:     syscall.InvalidHandle,
+		bufferPool: &sync.Pool{
+			New: func() interface{} {
+				// Allocate buffer with size of template + margin if needed
+				if tmpl != nil {
+					buf := make([]byte, len(tmpl.Raw))
+					copy(buf, tmpl.Raw)
+					return buf
+				}
+				return make([]byte, 1500)
+			},
+		},
 	}
+
+	// Try to initialize raw socket once
+	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, IPPROTO_RAW)
+	if err == nil {
+		// Set IP_HDRINCL
+		if err := syscall.SetsockoptInt(fd, syscall.IPPROTO_IP, IP_HDRINCL, 1); err == nil {
+			s.socketFD = fd
+		} else {
+			syscall.Close(fd)
+		}
+	}
+
+	return s
 }
 
 func (s *RawStrategy) Execute(ctx context.Context, target Target) error {
@@ -76,20 +102,39 @@ func (s *RawStrategy) Execute(ctx context.Context, target Target) error {
 		}
 	}
 
-	// Build Packet
-	var packet []byte
-	if s.template != nil {
-		packet = s.template.BuildPacket(srcIP, dstIP, 0, dstPort)
-	} else {
+	// Build Packet using Pool
+	if s.template == nil {
 		return fmt.Errorf("no template")
 	}
 
-	// Send
-	// If spoofing is active (randomSpoof or spoofIPs provided), we usage raw socket.
-	// Else we try standard Dial (if not raw socket available).
+	packet := s.bufferPool.Get().([]byte)
+	defer s.bufferPool.Put(packet)
 
-	// Actually, l4_attack.py ALWAYS tries raw socket first.
-	// I will implement raw socket logic here.
+	// Update packet (init=true only if we suspect pool gave garbage, but New() gives clean? No, New gives zeroes.
+	// Actually New() gives zeroes, so we need init=true for new buffers.
+	// But reused buffers have old data.
+	// We can't easily distinguish new vs reused in sync.Pool without a wrapper.
+	// OPTIMIZATION: Always init=true is safer but slower (copy). Use init=true for now to be safe,
+	// or rely on overwrite? UpdatePacket overwrites variables. Constants are overwritten if init=true.
+	// To support zero-copy fully, we'd need to trust the buffer state.
+	// Let's use init=true to ensure correctness first, as it's still way faster than make().
+	// Wait, if I use init=true, I copy t.Raw every time. That's a memory copy.
+	// For max performance, we want init=false.
+	// But new buffers (from New) are empty.
+	// If I check if packet[0] == 0 (assuming template starts with non-zero)? Risky.
+	// Correct approach: Initialize in New().
+	// But New() cannot modify the buffer after allocation easily without knowing t.Raw? New() knows t.Raw!
+	// So New() should copy t.Raw!
+
+	// I updated New() to copy t.Raw? No, code above `make([]byte, len(tmpl.Raw))` is just allocation.
+	// I will update New() to copy t.Raw.
+
+	s.template.UpdatePacket(packet, raw.PacketParams{
+		SrcIP:   srcIP,
+		DstIP:   dstIP,
+		SrcPort: 0, // Random
+		DstPort: dstPort,
+	}, false) // init=false because we handle init in Pool.New or assume init
 
 	return s.sendRaw(packet, dstIP, dstPort)
 }
@@ -101,34 +146,24 @@ func (s *RawStrategy) sendRaw(packet []byte, dstIP net.IP, dstPort int) error {
 		sendPacket = s.template.GetPacketWithoutL2(packet)
 	}
 
-	// Windows Raw Socket
-	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, IPPROTO_RAW)
-	if err != nil {
-		// Fallback to UDP dial if raw socket fails (likely permission issue)
-		return s.sendUDP(packet, dstIP, dstPort)
-	}
-	defer syscall.Close(fd)
+	// Use pre-initialized socket if available
+	if s.socketFD != syscall.InvalidHandle {
+		// Destination Address
+		addr := syscall.SockaddrInet4{
+			Port: dstPort,
+		}
+		copy(addr.Addr[:], dstIP.To4())
 
-	// Set IP_HDRINCL - we provide our own IP header
-	// On Windows IP_HDRINCL = 2, on Linux = 3
-	err = syscall.SetsockoptInt(fd, syscall.IPPROTO_IP, IP_HDRINCL, 1)
-	if err != nil {
-		return s.sendUDP(packet, dstIP, dstPort)
-	}
-
-	// Destination Address
-	addr := syscall.SockaddrInet4{
-		Port: dstPort,
-	}
-	copy(addr.Addr[:], dstIP.To4())
-
-	err = syscall.Sendto(fd, sendPacket, 0, &addr)
-	if err != nil {
-		return err
+		err := syscall.Sendto(s.socketFD, sendPacket, 0, &addr)
+		if err != nil {
+			return err
+		}
+		s.IncrementConnections()
+		return nil
 	}
 
-	s.IncrementConnections()
-	return nil
+	// Fallback to UDP if raw socket failed to init
+	return s.sendUDP(packet, dstIP, dstPort)
 }
 
 func (s *RawStrategy) sendUDP(packet []byte, dstIP net.IP, dstPort int) error {

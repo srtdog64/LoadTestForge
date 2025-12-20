@@ -197,14 +197,14 @@ func getDefaultSize(name string) int {
 
 // PacketParams contains parameters for building a packet
 type PacketParams struct {
-	SrcIP    net.IP
-	DstIP    net.IP
-	SrcPort  int
-	DstPort  int
-	SrcMAC   net.HardwareAddr
-	DstMAC   net.HardwareAddr
-	SrcIPv6  net.IP
-	DstIPv6  net.IP
+	SrcIP   net.IP
+	DstIP   net.IP
+	SrcPort int
+	DstPort int
+	SrcMAC  net.HardwareAddr
+	DstMAC  net.HardwareAddr
+	SrcIPv6 net.IP
+	DstIPv6 net.IP
 }
 
 // BuildPacket constructs a packet from the template with given parameters
@@ -218,10 +218,11 @@ func (t *Template) BuildPacket(srcIP, dstIP net.IP, srcPort, dstPort int) []byte
 	return t.BuildPacketWithParams(params)
 }
 
-// BuildPacketWithParams constructs a packet with full parameters
-func (t *Template) BuildPacketWithParams(params PacketParams) []byte {
-	packet := make([]byte, len(t.Raw))
-	copy(packet, t.Raw)
+// UpdatePacket updates an existing packet buffer with new parameters.
+func (t *Template) UpdatePacket(packet []byte, params PacketParams, init bool) {
+	if init {
+		copy(packet, t.Raw)
+	}
 
 	// Generate random source port if not specified
 	srcPort := params.SrcPort
@@ -325,7 +326,12 @@ func (t *Template) BuildPacketWithParams(params PacketParams) []byte {
 	// Second pass: calculate lengths and checksums
 	t.calculateLengths(packet)
 	t.calculateChecksums(packet)
+}
 
+// BuildPacketWithParams constructs a packet with full parameters
+func (t *Template) BuildPacketWithParams(params PacketParams) []byte {
+	packet := make([]byte, len(t.Raw))
+	t.UpdatePacket(packet, params, true)
 	return packet
 }
 
